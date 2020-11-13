@@ -2,39 +2,39 @@ from mininet.topo import Topo
 from mininet.net import Mininet
 from mininet.util import dumpNodeConnections
 from mininet.log import setLogLevel
+from mininet.cli import CLI
 
 class ElephantFlowTopo(Topo):
     def build(self):
 
         # Add hosts and border switches
-        leftHost = self.addHost( 'h1' )
-        rightHost = self.addHost( 'h2' )
-        leftSwitch = self.addSwitch( 's3' )
-        rightSwitch = self.addSwitch( 's4' )
+        h1 = self.addHost( 'h1' )
+        h2 = self.addHost( 'h2' )
+        s1 = self.addSwitch( 's1' )
+        s2 = self.addSwitch( 's2' )
 
         # Add middle switches to enable multiple links
-        middleSwitch1 = self.addHost('m1')
-        middleSwitch2 = self.addHost('m2')
-        middleSwitch3 = self.addHost('m3')
+        m1 = self.addSwitch('m1')
+        m2 = self.addSwitch('m2')
+        m3 = self.addSwitch('m3')
 
         # Add links between hosts and border switches
-        self.addLink( leftHost, leftSwitch )
-        self.addLink( rightSwitch, rightHost )
+        self.addLink( h1, s1 )
+        self.addLink( h2, s2 )
 
         # Add links between border switches and middle switches
-        self.addLink( leftSwitch, rightSwitch )
 
         """ M1 """
-        self.addLink( leftSwitch, middleSwitch1 )
-        self.addLink( middleSwitch1, rightSwitch )
+        self.addLink( s1, m1 )
+        self.addLink( s2, m1 )
 
         """ M2 """
-        self.addLink( leftSwitch, middleSwitch2 )
-        self.addLink( middleSwitch2, rightSwitch )
+        self.addLink( s1, m2 )
+        self.addLink( s2, m2 )
 
         """ M3 """
-        self.addLink( leftSwitch, middleSwitch3 )
-        self.addLink( middleSwitch3, rightSwitch )
+        self.addLink( s1, m3 )
+        self.addLink( s2, m3 )
 
 
 def simpleTest():
@@ -46,6 +46,7 @@ def simpleTest():
     dumpNodeConnections(net.hosts)
     print "Testing network connectivity"
     net.pingAll()
+    CLI(net)
     net.stop()
 
 if __name__ == '__main__':
