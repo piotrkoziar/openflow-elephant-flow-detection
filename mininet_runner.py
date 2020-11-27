@@ -12,37 +12,39 @@ experiment_duration = 180  # seconds
 n_mice_flows = 45
 n_elephant_flows = 5
 
+log_dir = "."
+
 class ElephantFlowTopo(Topo):
     def build(self):
 
         # Add hosts and border switches
         h1 = self.addHost( 'h1' )
         h2 = self.addHost( 'h2' )
-        s1 = self.addSwitch( 's1' )
-        s2 = self.addSwitch( 's2' )
+        # s1 = self.addSwitch( 's1' )
+        # s2 = self.addSwitch( 's2' )
 
-        # Add middle switches to enable multiple links
-        m1 = self.addSwitch('m1')
-        m2 = self.addSwitch('m2')
-        m3 = self.addSwitch('m3')
+        # # Add middle switches to enable multiple links
+        # m1 = self.addSwitch('m1')
+        # m2 = self.addSwitch('m2')
+        # m3 = self.addSwitch('m3')
 
         # Add links between hosts and border switches
-        self.addLink( h1, s1 )
-        self.addLink( h2, s2 )
+        self.addLink( h1, h2 )
+        # self.addLink( h2, s2 )
 
-        # Add links between border switches and middle switches
+        # # Add links between border switches and middle switches
 
-        """ M1 """
-        self.addLink( s1, m1 )
-        self.addLink( s2, m1 )
+        # """ M1 """
+        # self.addLink( s1, m1 )
+        # self.addLink( s2, m1 )
 
-        """ M2 """
-        self.addLink( s1, m2 )
-        self.addLink( s2, m2 )
+        # """ M2 """
+        # self.addLink( s1, m2 )
+        # self.addLink( s2, m2 )
 
-        """ M3 """
-        self.addLink( s1, m3 )
-        self.addLink( s2, m3 )
+        # """ M3 """
+        # self.addLink( s1, m3 )
+        # self.addLink( s2, m3 )
 
 
 def Test():

@@ -14,26 +14,23 @@ import re
 import numpy as np
 
 # FLOW SIZES
-
 # flows with 15 packets or greater is an elephant flow as per CISCO
 # considering 1512 byte packets, elephant flow size is
 
 # threshold = (14 * 1512)/1000 = 21.168 KBytes
-
 
 mice_flow_min = 100  # KBytes = 100KB
 mice_flow_max = 10240  # KBytes = 10MB
 elephant_flow_min = 10240  # KBytes = 10MB
 elephant_flow_max = 1024*1024*10  # KBytes = 10 GB
 
-# L4 PROTOCOLS
+# IPERF L4 PROTOCOLS
 protocol_list = ['--udp', '']  # udp / tcp
 port_min = 1025
 port_max = 65536
 
 # IPERF SETTINGS
 sampling_interval = '1'  # seconds
-
 
 # ELEPHANT FLOW PARAMS
 elephant_bandwidth_list = ['10M', '20M', '30M', '40M', '50M', '60M', '70M', '80M', '90M', '100M',
@@ -57,14 +54,13 @@ def generate_elephant_flows(id, duration, net, log_dir):
     """
     Generate Elephant flows
     May use either tcp or udp
+    Uses first two hosts
     """
 
     hosts = net.hosts
 
-    # select random src and dst
-    end_points = random.sample(hosts, 2)
-    src = net.get(str(end_points[0]))
-    dst = net.get(str(end_points[1]))
+    src = net.get(str(hosts[0]))
+    dst = net.get(str(hosts[1]))
 
     # select connection params
     protocol = random.choice(protocol_list)
@@ -104,14 +100,13 @@ def generate_mice_flows(id, duration, net, log_dir):
     """
     Generate mice flows
     May use either tcp or udp
+    Uses first two hosts
     """
 
     hosts = net.hosts
 
-    # select random src and dst
-    end_points = random.sample(hosts, 2)
-    src = net.get(str(end_points[0]))
-    dst = net.get(str(end_points[1]))
+    src = net.get(str(hosts[0]))
+    dst = net.get(str(hosts[1]))
 
     # select connection params
     protocol = random.choice(protocol_list)
@@ -151,7 +146,7 @@ def generate_flows(n_elephant_flows, n_mice_flows, duration, net, log_dir):
         mkdir(log_dir)
 
     n_total_flows = n_elephant_flows + n_mice_flows
-    interval = duration / n_total_flows
+    interval_max = duration / n_total_flows
 
     # setting random mice flow or elephant flows
     flow_type = []
@@ -164,11 +159,11 @@ def generate_flows(n_elephant_flows, n_mice_flows, duration, net, log_dir):
     # setting random flow start times
     flow_start_time = []
     for i in range(n_total_flows):
-        n = random.randint(1, interval)
+        interval = random.randint(1, interval_max)
         if i == 0:
             flow_start_time.append(0)
         else:
-            flow_start_time.append(flow_start_time[i - 1] + n)
+            flow_start_time.append(flow_start_time[i - 1] + interval)
 
     # setting random flow end times
     # using normal distribution
