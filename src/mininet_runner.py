@@ -20,31 +20,31 @@ class ElephantFlowTopo(Topo):
         # Add hosts and border switches
         h1 = self.addHost( 'h1' )
         h2 = self.addHost( 'h2' )
-        # s1 = self.addSwitch( 's1' )
-        # s2 = self.addSwitch( 's2' )
+        s1 = self.addSwitch( 's1' )
+        s2 = self.addSwitch( 's2' )
 
         # # Add middle switches to enable multiple links
-        # m1 = self.addSwitch('m1')
-        # m2 = self.addSwitch('m2')
-        # m3 = self.addSwitch('m3')
+        sm1 = self.addSwitch( 'sm1' )
+        sm2 = self.addSwitch( 'sm2' )
+        sm3 = self.addSwitch( 'sm3' )
 
         # Add links between hosts and border switches
-        self.addLink( h1, h2 )
-        # self.addLink( h2, s2 )
+        self.addLink( h1, s1 )
+        self.addLink( h2, s2 )
 
         # # Add links between border switches and middle switches
 
-        # """ M1 """
-        # self.addLink( s1, m1 )
-        # self.addLink( s2, m1 )
+        # """ SM1 """
+        self.addLink( s1, sm1 )
+        self.addLink( s2, sm1 )
 
-        # """ M2 """
-        # self.addLink( s1, m2 )
-        # self.addLink( s2, m2 )
+        # """ SM2 """
+        self.addLink( s1, sm2 )
+        self.addLink( s2, sm2 )
 
-        # """ M3 """
-        # self.addLink( s1, m3 )
-        # self.addLink( s2, m3 )
+        # """ SM3 """
+        self.addLink( s1, sm3 )
+        self.addLink( s2, sm3 )
 
 
 def Test():
