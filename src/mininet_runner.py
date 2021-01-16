@@ -1,9 +1,11 @@
 from mininet.topo import Topo
 from mininet.net import Mininet
 from mininet.util import dumpNodeConnections
+from mininet.node import RemoteController, OVSKernelSwitch, OVSSwitch, DefaultController
 from mininet.log import setLogLevel
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
+from functools import partial
 
 from flows_generator import generate_flows
 
@@ -18,39 +20,44 @@ class ElephantFlowTopo(Topo):
     def build(self):
 
         # Add hosts and border switches
-        h1 = self.addHost( 'h1' )
-        h2 = self.addHost( 'h2' )
-        s1 = self.addSwitch( 's1' )
-        s2 = self.addSwitch( 's2' )
+        h1 = self.addHost( 'h1', protocols='OpenFlow13' )
+        h2 = self.addHost( 'h2', protocols='OpenFlow13' )
+        s1 = self.addSwitch( 's1', protocols='OpenFlow13', cls=OVSKernelSwitch )
+        s2 = self.addSwitch( 's2', protocols='OpenFlow13', cls=OVSKernelSwitch )
 
-        # # Add middle switches to enable multiple links
-        sm1 = self.addSwitch( 'sm1' )
-        sm2 = self.addSwitch( 'sm2' )
-        sm3 = self.addSwitch( 'sm3' )
+        # Add middle switches to enable multiple links
+        s3 = self.addSwitch( 's3', protocols='OpenFlow13', cls=OVSKernelSwitch  )
+        s4 = self.addSwitch( 's4', protocols='OpenFlow13', cls=OVSKernelSwitch  )
+        s5 = self.addSwitch( 's5', protocols='OpenFlow13', cls=OVSKernelSwitch  )
 
         # Add links between hosts and border switches
         self.addLink( h1, s1 )
         self.addLink( h2, s2 )
 
-        # # Add links between border switches and middle switches
+        # uncomment only for testing (DNM)
+        # self.addLink( s1, s2 )
+
+        # Add links between border switches and middle switches
 
         # """ SM1 """
-        self.addLink( s1, sm1 )
-        self.addLink( s2, sm1 )
+        self.addLink( s1, s3 )
+        self.addLink( s2, s3 )
 
         # """ SM2 """
-        self.addLink( s1, sm2 )
-        self.addLink( s2, sm2 )
+        self.addLink( s1, s4 )
+        self.addLink( s2, s4 )
 
         # """ SM3 """
-        self.addLink( s1, sm3 )
-        self.addLink( s2, sm3 )
+        self.addLink( s1, s5 )
+        self.addLink( s2, s5 )
 
 
 def Test():
     "Create and test a simple network"
     topo = ElephantFlowTopo()
-    net = Mininet(topo)
+
+    # remote ryu controller on localhost:6653
+    net = Mininet(topo, controller=partial( RemoteController, ip='127.0.0.1', port=6653 ) )
     net.start()
 
     user_input = "QUIT"
