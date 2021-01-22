@@ -28,6 +28,11 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.elephant_thr = 10000000
         self.interval = 1
 
+        # dpids of border switches
+        self.border_dpids = [1, 2]
+        self.out_port_paths = [2, 3, 4]
+        self.variant = 0 # max is 2
+
         self.stp.set_config({})
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
@@ -73,11 +78,10 @@ class SimpleSwitch13(app_manager.RyuApp):
                          '-------- ----------------- '
                          '-------- -------- --------')
         for stat in sorted([flow for flow in body if flow.priority == 1],
-                           key=lambda flow: (flow.match['in_port'],
-                                             flow.match['eth_dst'])):
-            self.logger.info('%016x %8x %17s %8x %8d %8d',
-                             ev.msg.datapath.id,
-                             stat.match['in_port'], stat.match['eth_dst'],
+                           key=lambda flow: (flow.match['eth_dst'])):
+            self.logger.info('%016x %17s %8x %8d %8d',
+                             ev.msg.datapath.id
+                             , stat.match['eth_dst'],
                              stat.instructions[0].actions[0].port,
                              stat.packet_count, stat.byte_count)
             # self.logger.info("\n %s \n", stat.match['eth_dst'])
@@ -87,10 +91,39 @@ class SimpleSwitch13(app_manager.RyuApp):
             self.last_flow_packets[ev.msg.datapath.id][stat.match['eth_dst']] = stat.byte_count
             # self.last_packet_count_valid[ev.msg.datapath.id][stat.match['eth_dst']] = 1
             if thr > self.elephant_thr:
-                self.is_flow_elephant[ev.msg.datapath.id][stat.match['eth_dst']] = 1
-                self.logger.info("\n FOUND ELEPHANT! \n")
+                if self.is_flow_elephant[ev.msg.datapath.id][stat.match['eth_dst']] == 0:
+                    self.logger.info("\n FOUND NEW ELEPHANT! \n")
+                    self.is_flow_elephant[ev.msg.datapath.id][stat.match['eth_dst']] = 1
+                    # change path variant
+                    self.variant = (self.variant + 1) % 3
+                    self.handle_elephant(ev.msg.datapath)
+                else:
+                    self.logger.info("\n FOUND ELEPHANT! \n")
 
         self.logger.info("\n\n")
+
+    def handle_elephant(self, datapath):
+        if datapath.id not in self.border_dpids:
+            return
+
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        for dst in self.is_flow_elephant[datapath.id].keys():
+            # self.logger.info("DST - ELEPHANT HANDLE: %s", dst)
+            match = parser.OFPMatch(eth_dst=dst)
+            mod = parser.OFPFlowMod(
+                datapath, command=ofproto.OFPFC_DELETE,
+                out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY,
+                priority=1, match=match)
+            datapath.send_msg(mod)
+
+            # create new path
+            new_out_port = self.out_port_paths[self.variant]
+
+            match = parser.OFPMatch(eth_dst=dst)
+            actions = [parser.OFPActionOutput(new_out_port)]
+            self.add_flow(datapath, 1, match, actions)
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
@@ -107,7 +140,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                                     match=match, instructions=inst)
         datapath.send_msg(mod)
 
-    def delete_flow(self, datapath):
+    def delete_flows(self, datapath):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
@@ -179,7 +212,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.logger.debug("[dpid=%s] %s", dpid_str, msg)
 
         if dp.id in self.mac_to_port:
-            self.delete_flow(dp)
+            self.delete_flows(dp)
             del self.mac_to_port[dp.id]
 
     @set_ev_cls(stplib.EventPortStateChange, MAIN_DISPATCHER)
