@@ -72,10 +72,10 @@ class SimpleSwitch13(app_manager.RyuApp):
         body = ev.msg.body
 
         self.logger.info('datapath         '
-                         'in-port  eth-dst           '
+                         'eth-dst           '
                          'out-port packets  bytes')
         self.logger.info('---------------- '
-                         '-------- ----------------- '
+                         '----------------- '
                          '-------- -------- --------')
         for stat in sorted([flow for flow in body if flow.priority == 1],
                            key=lambda flow: (flow.match['eth_dst'])):
