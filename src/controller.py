@@ -22,6 +22,11 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.stp = kwargs['stplib']
         self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
+        self.last_flow_packets = {}
+        self.is_flow_elephant = {}
+
+        self.elephant_thr = 10000000
+        self.interval = 1
 
         self.stp.set_config({})
 
@@ -33,6 +38,8 @@ class SimpleSwitch13(app_manager.RyuApp):
             if datapath.id not in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
                 self.datapaths[datapath.id] = datapath
+                self.is_flow_elephant[datapath.id] = {}
+                self.last_flow_packets[datapath.id] = {}
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
@@ -42,7 +49,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
-            hub.sleep(10)
+            hub.sleep(self.interval)
 
     def _request_stats(self, datapath):
         self.logger.debug('send stats request: %016x', datapath.id)
@@ -73,6 +80,16 @@ class SimpleSwitch13(app_manager.RyuApp):
                              stat.match['in_port'], stat.match['eth_dst'],
                              stat.instructions[0].actions[0].port,
                              stat.packet_count, stat.byte_count)
+            # self.logger.info("\n %s \n", stat.match['eth_dst'])
+            # if self.last_packet_count_valid[ev.msg.datapath.id][stat.match['eth_dst']] == 1:
+            thr = (stat.byte_count - self.last_flow_packets[ev.msg.datapath.id][stat.match['eth_dst']]) / self.interval
+            self.logger.info("Throughput = %d", thr)
+            self.last_flow_packets[ev.msg.datapath.id][stat.match['eth_dst']] = stat.byte_count
+            # self.last_packet_count_valid[ev.msg.datapath.id][stat.match['eth_dst']] = 1
+            if thr > self.elephant_thr:
+                self.is_flow_elephant[ev.msg.datapath.id][stat.match['eth_dst']] = 1
+                self.logger.info("\n FOUND ELEPHANT! \n")
+
         self.logger.info("\n\n")
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
@@ -143,6 +160,9 @@ class SimpleSwitch13(app_manager.RyuApp):
         if out_port != ofproto.OFPP_FLOOD:
             match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
             self.add_flow(datapath, 1, match, actions)
+            self.logger.info("\n UPDATING %s \n", match['eth_dst'])
+            self.last_flow_packets[datapath.id][match['eth_dst']] = 0
+            self.is_flow_elephant[datapath.id][match['eth_dst']] = 0
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data

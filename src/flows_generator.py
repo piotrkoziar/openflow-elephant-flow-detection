@@ -18,8 +18,8 @@ import numpy as np
 
 # threshold = (14 * 1512)/1000 = 21.168 KBytes
 
-mice_flow_min = 100  # KBytes = 100KB
-mice_flow_max = 10240  # KBytes = 10MB
+mice_flow_min = 1  # KBytes = 1KB
+mice_flow_max = 100  # KBytes = 100KB
 elephant_flow_min = 10240  # KBytes = 10MB
 elephant_flow_max = 1024*1024*10  # KBytes = 10 GB
 
@@ -104,8 +104,8 @@ def generate_mice_flows(id, duration, net, log_dir):
 
     hosts = net.hosts
 
-    src = net.get(str(hosts[0]))
-    dst = net.get(str(hosts[1]))
+    src = net.get(str(hosts[2]))
+    dst = net.get(str(hosts[3]))
 
     # select connection params
     protocol = random.choice(protocol_list)
