@@ -80,6 +80,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
                 del self.datapaths[datapath.id]
+                self.flows[datapath.id] = []
 
     def _monitor(self):
         while True:
@@ -103,45 +104,45 @@ class FlowAwareSwitch(app_manager.RyuApp):
         body = ev.msg.body
         dpid = ev.msg.datapath.id
 
-        # self.logger.info('datapath         '
-        #                  'in-port  eth-dst           '
-        #                  'out-port packets  bytes')
-        # self.logger.info('---------------- '
-        #                  '-------- ----------------- '
-        #                  '-------- -------- --------')
-        # for stat in sorted([flow for flow in body if flow.priority == 1],
-        #                    key=lambda flow: (flow.match['eth_dst'])):
+        self.logger.info('datapath         '
+                         'in-port  eth-dst           '
+                         'out-port packets  bytes')
+        self.logger.info('---------------- '
+                         '-------- ----------------- '
+                         '-------- -------- --------')
+        for stat in sorted([flow for flow in body if flow.priority == 1],
+                           key=lambda flow: (flow.match['eth_dst'])):
 
-        #     flow = self.find_flow(dpid, stat.match['eth_dst'], stat.match['in_port'], stat.instructions[0].actions[0].port)
+            flow = self.find_flow(dpid, stat.match['eth_dst'], stat.match['in_port'], stat.instructions[0].actions[0].port)
 
-        #     if flow is None:
-        #         self.logger.warning("\n%016x %8x %17s %8x\nNo correlated flow object found!\n", dpid, stat.match['in_port'], stat.match['eth_dst'], stat.instructions[0].actions[0].port)
-        #     else:
+            if flow is None:
+                self.logger.warning("\n%016x %8x %17s %8x\nNo correlated flow object found!\n", dpid, stat.match['in_port'], stat.match['eth_dst'], stat.instructions[0].actions[0].port)
+            else:
 
-        #         # calculate threshold
-        #         thr = (stat.byte_count - flow.last_byte_count) / self.interval
-        #         self.logger.info("Throughput = %d", thr)
+                # calculate threshold
+                thr = (stat.byte_count - flow.last_byte_count) / self.interval
+                self.logger.info("Throughput = %d", thr)
 
-        #         # update last packet count value
-        #         flow.last_byte_count = stat.byte_count
-        #         self.logger.info("Updating flow byte count")
+                # update last packet count value
+                flow.last_byte_count = stat.byte_count
+                self.logger.info("Updating flow byte count")
 
-        #         self.logger.info('%016x %8x %17s %8x %8d %8d',
-        #                         dpid,
-        #                         flow.in_port, flow.dst,
-        #                         flow.out_port,
-        #                         stat.packet_count, stat.byte_count)
+                self.logger.info('%016x %8x %17s %8x %8d %8d',
+                                dpid,
+                                flow.in_port, flow.dst,
+                                flow.out_port,
+                                stat.packet_count, stat.byte_count)
 
-        #         if thr > self.elephant_thr:
-        #             if flow.is_elephant == False:
-        #                 self.logger.info("\n FOUND NEW ELEPHANT! \n")
-        #                 flow.is_elephant = True
+                if thr > self.elephant_thr:
+                    if flow.is_elephant == False:
+                        self.logger.info("\n FOUND NEW ELEPHANT! \n")
+                        flow.is_elephant = True
 
-        #                 self.handle_elephant(dpid, flow)
-        #             else:
-        #                 self.logger.info("\n FOUND ELEPHANT! \n")
+                        self.handle_elephant(dpid, flow)
+                    else:
+                        self.logger.info("\n FOUND ELEPHANT! \n")
 
-        # self.logger.info("\n\n")
+        self.logger.info("\n\n")
 
     def handle_elephant(self, dpid, flow):
         if dpid not in self.border_dpids:
