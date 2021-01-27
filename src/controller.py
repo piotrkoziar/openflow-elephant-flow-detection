@@ -34,25 +34,15 @@ class FlowAwareSwitch(app_manager.RyuApp):
         super(FlowAwareSwitch, self).__init__(*args, **kwargs)
         self.stp = kwargs['stplib']
 
-        self.mac_to_port = {}
-
-        self.datapaths = {}
-        self.monitor_thread = hub.spawn(self._monitor)
-
-        self.last_flow_packets = {}
-        self.is_flow_elephant = {}
-
         self.elephant_thr = 10000000
         self.interval = 1
 
-        # dpids of border switches
-        self.border_dpids = [1, 2]
-        self.out_port_paths = [2, 3, 4]
-        self.variant = 0 # max is 2
-
+        self.datapaths = {}
+        self.mac_to_port = {}
         self.flows = {}
 
         self.stp.set_config({})
+        self.monitor_thread = hub.spawn(self._monitor)
 
     def find_flow(self, dpid, dst, in_port, out_port):
         for fl in self.flows[dpid]:
@@ -72,15 +62,12 @@ class FlowAwareSwitch(app_manager.RyuApp):
             if datapath.id not in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
                 self.datapaths[datapath.id] = datapath
-                self.is_flow_elephant[datapath.id] = {}
-                self.last_flow_packets[datapath.id] = {}
-
                 self.flows[datapath.id] = []
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
                 del self.datapaths[datapath.id]
-                self.flows[datapath.id] = []
+                del self.flows[datapath.id]
 
     def _monitor(self):
         while True:
@@ -90,7 +77,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
     def _request_stats(self, datapath):
         self.logger.debug('send stats request: %016x', datapath.id)
-        ofproto = datapath.ofproto
+        # ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         req = parser.OFPFlowStatsRequest(datapath)
@@ -240,9 +227,6 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
             self.add_flow(datapath, 1, match, actions)
             self.logger.info("\n UPDATING %s \n", match['eth_dst'])
-
-            self.last_flow_packets[dpid][match['eth_dst']] = 0
-            self.is_flow_elephant[dpid][match['eth_dst']] = 0
 
             fl = Flow(dst, in_port, out_port, False)
             self.flows[dpid].append(fl)
