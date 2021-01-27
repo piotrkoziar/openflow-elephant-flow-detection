@@ -33,11 +33,11 @@ class ElephantFlowTopo(Topo):
         s5 = self.addSwitch( 's5', protocols='OpenFlow13', cls=OVSKernelSwitch  )
 
         # Add links between hosts and border switches
-        self.addLink( h1, s1 )
-        self.addLink( h2, s2 )
+        self.addLink( h1, s1, 1, 1 )
+        self.addLink( h11, s1, 1, 2 )
 
-        self.addLink( h11, s1 )
-        self.addLink ( h22, s2 )
+        self.addLink( h2, s2, 1, 1 )
+        self.addLink ( h22, s2, 1, 2 )
 
         # uncomment only for testing (DNM)
         # self.addLink( s1, s2 )

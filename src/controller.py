@@ -12,16 +12,44 @@ from ryu.app import simple_switch_13
 from ryu.lib import hub
 from operator import attrgetter
 
-class SimpleSwitch13(app_manager.RyuApp):
+class SwitchInstance():
+    def __init__(self, dpid, n_ports, n_const=2):
+
+        self.dpid = dpid
+
+        if n_ports == 0:
+            self.const_ports = 0
+            self.elective_ports = 0
+        elif n_ports < n_const:
+            self.const_ports = n_ports
+            self.elective_ports = 0
+        else:
+            self.const_ports = n_const
+            self.elective_ports = n_ports - n_const
+
+class Flow():
+    def __init__(self, src, in_port, out_port, is_elephant=False):
+        self.src = src
+        self.in_port = in_port
+        self.out_port = out_port
+        self.is_elephant = is_elephant
+
+        self.last_packet_count = 0
+
+
+class FlowAwareSwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     _CONTEXTS = {'stplib': stplib.Stp}
 
     def __init__(self, *args, **kwargs):
-        super(SimpleSwitch13, self).__init__(*args, **kwargs)
-        self.mac_to_port = {}
+        super(FlowAwareSwitch, self).__init__(*args, **kwargs)
         self.stp = kwargs['stplib']
+
+        self.mac_to_port = {}
+
         self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
+
         self.last_flow_packets = {}
         self.is_flow_elephant = {}
 
@@ -32,6 +60,8 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.border_dpids = [1, 2]
         self.out_port_paths = [2, 3, 4]
         self.variant = 0 # max is 2
+
+        self.flows = {}
 
         self.stp.set_config({})
 
@@ -45,6 +75,8 @@ class SimpleSwitch13(app_manager.RyuApp):
                 self.datapaths[datapath.id] = datapath
                 self.is_flow_elephant[datapath.id] = {}
                 self.last_flow_packets[datapath.id] = {}
+
+                self.flows[datapath.id] = []
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
@@ -70,6 +102,7 @@ class SimpleSwitch13(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
         body = ev.msg.body
+        dpid = ev.msg.datapath.id
 
         self.logger.info('datapath         '
                          'in-port  eth-dst           '
@@ -187,16 +220,25 @@ class SimpleSwitch13(app_manager.RyuApp):
             out_port = ofproto.OFPP_FLOOD
             self.logger.info("packet in. Unknown mac.\nFlooding %s %s %s %s", dpid, src, dst, in_port)
 
-        actions = [parser.OFPActionOutput(out_port)]
 
         # install a flow to avoid packet_in next time
         if out_port != ofproto.OFPP_FLOOD:
+
+            # if match, send to the out_port
             match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+            actions = [parser.OFPActionOutput(out_port)]
+
             self.add_flow(datapath, 1, match, actions)
             self.logger.info("\n UPDATING %s \n", match['eth_dst'])
-            self.last_flow_packets[datapath.id][match['eth_dst']] = 0
-            self.is_flow_elephant[datapath.id][match['eth_dst']] = 0
+
+            self.last_flow_packets[dpid][match['eth_dst']] = 0
+            self.is_flow_elephant[dpid][match['eth_dst']] = 0
+
+            fl = Flow(src, in_port, out_port, False)
+            self.flows[dpid].append(fl)
+
         data = None
+        # send packet_out in case of no buffer
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
 
