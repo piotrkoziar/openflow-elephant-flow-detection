@@ -12,6 +12,9 @@ from ryu.app import simple_switch_13
 from ryu.lib import hub
 from operator import attrgetter
 
+MAX_PORT_VAL = 255
+UNSPECIFIED_ADDRESS = 'xx:xx:xx:xx:xx:xx'
+
 class Flow():
     def __init__(self, dst, in_port, out_port, is_elephant=False):
         self.dst = dst
@@ -114,12 +117,15 @@ class FlowAwareSwitch(app_manager.RyuApp):
                          '-------- ----------------- '
                          '-------- -------- --------')
         for stat in sorted([flow for flow in body if flow.priority == 1],
-                           key=lambda flow: (flow.match['eth_dst'])):
+                           key=lambda flow: (flow.match['in_port'])):
 
-            flow = self.find_flow(dpid, stat.match['eth_dst'], stat.match['in_port'], stat.instructions[0].actions[0].port)
+            try:
+                flow = self.find_flow(dpid, stat.match['eth_dst'], stat.match['in_port'], stat.instructions[0].actions[0].port)
+            except KeyError:
+                flow = None
 
             if flow is None:
-                self.logger.warning("\n%016x %8x %17s %8x\nNo correlated flow object found!\n", dpid, stat.match['in_port'], stat.match['eth_dst'], stat.instructions[0].actions[0].port)
+                self.logger.warning("\n%016x \nNo correlated flow object found!\n", dpid)
             else:
 
                 # calculate threshold
@@ -331,9 +337,13 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPortDescStatsReply, MAIN_DISPATCHER)
     def port_desc_stats_reply_handler(self, ev):
+        datapath = ev.msg.datapath
         dpid = ev.msg.datapath.id
+        ofproto = ev.msg.datapath.ofproto
+        parser = datapath.ofproto_parser
 
         ports = []
+        has_only_constant = True
         for p in ev.msg.body:
             ports.append('port_no=%d hw_addr=%s name=%s config=0x%08x '
                         'state=0x%08x curr=0x%08x advertised=0x%08x '
@@ -347,6 +357,28 @@ class FlowAwareSwitch(app_manager.RyuApp):
             # if port_no < 3, mark the port as constant
             if p.port_no < 3:
                 self.ports[dpid][p.port_no] = Port(p.hw_addr, is_constant=True)
-            else:
-                self.ports[dpid][p.port_no] = Port(p.hw_adddr, is_constant=False)
+            elif p.port_no < MAX_PORT_VAL:
+                has_only_constant = False
+                self.ports[dpid][p.port_no] = Port(p.hw_addr, is_constant=False)
+
         self.logger.info('OFPPortDescStatsReply received: %s', ports)
+
+        if not has_only_constant:
+            return
+
+        self.logger.info("DPID: %d has only const ports!", dpid)
+
+        # for port1_no in self.ports[dpid].keys():
+        #     if (self.ports[dpid][port1_no].is_constant == False):
+        #         continue
+        #     for port2_no in self.ports[dpid].keys():
+        #         if (port1_no == port2_no) or (self.ports[dpid][port2_no].is_constant == False):
+        #             continue
+
+        #         # create flow between two const ports
+        #         match = parser.OFPMatch(in_port=port1_no)
+        #         actions = [parser.OFPActionOutput(port2_no)]
+        #         self.add_flow(datapath, 1, match, actions)
+
+        #         fl = Flow(UNSPECIFIED_ADDRESS, port1_no, port2_no, False)
+        #         self.flows[dpid].append(fl)
