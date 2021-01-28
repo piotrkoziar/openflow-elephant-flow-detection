@@ -26,6 +26,11 @@ class Flow():
             (self.in_port == other.in_port) and
             (self.out_port == other.out_port))
 
+class Port():
+    def __init__(self, hw_addr, is_constant=False):
+        self.is_constant = is_constant
+        self.hw_addr = hw_addr
+
 class FlowAwareSwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     _CONTEXTS = {'stplib': stplib.Stp}
@@ -40,6 +45,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
         self.datapaths = {}
         self.mac_to_port = {}
         self.flows = {}
+        self.ports = {}
 
         self.stp.set_config({})
         self.monitor_thread = hub.spawn(self._monitor)
@@ -54,6 +60,14 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
         return None
 
+    def find_port_number(self, port_hw_addr):
+        for dpid in self.datapaths.keys():
+            for port_no in self.ports[dpid].keys():
+                port = self.ports[dpid][port_no]
+                if port.hw_adddr == port_hw_addr:
+                    return ( dpid, port_no )
+        return ( None, None )
+
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
     def _state_change_handler(self, ev):
@@ -63,11 +77,13 @@ class FlowAwareSwitch(app_manager.RyuApp):
                 self.logger.debug('register datapath: %016x', datapath.id)
                 self.datapaths[datapath.id] = datapath
                 self.flows[datapath.id] = []
+                self.ports[datapath.id] = {}
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
                 del self.datapaths[datapath.id]
                 del self.flows[datapath.id]
+                del self.ports[datapath.id]
 
     def _monitor(self):
         while True:
@@ -125,35 +141,56 @@ class FlowAwareSwitch(app_manager.RyuApp):
                         self.logger.info("\n FOUND NEW ELEPHANT! \n")
                         flow.is_elephant = True
 
-                        self.handle_elephant(dpid, flow)
+                        self.handle_elephant(ev.msg.datapath, flow)
                     else:
                         self.logger.info("\n FOUND ELEPHANT! \n")
 
         self.logger.info("\n\n")
 
-    def handle_elephant(self, dpid, flow):
-        if dpid not in self.border_dpids:
-            return
+    def handle_elephant(self, datapath, flow):
+
+        dpid  = datapath.id
 
         self.logger.info("Handle elephant")
-        # ofproto = datapath.ofproto
-        # parser = datapath.ofproto_parser
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
 
-        # for dst in self.is_flow_elephant[datapath.id].keys():
-        #     # self.logger.info("DST - ELEPHANT HANDLE: %s", dst)
-        #     match = parser.OFPMatch(eth_dst=dst)
-        #     mod = parser.OFPFlowMod(
-        #         datapath, command=ofproto.OFPFC_DELETE,
-        #         out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY,
-        #         priority=1, match=match)
-        #     datapath.send_msg(mod)
+        port_in_desc = self.ports[dpid][flow.in_port]
+        port_out_desc = self.ports[dpid][flow.out_port]
 
-        #     # create new path
-        #     new_out_port = self.out_port_paths[self.variant]
+        if (port_in_desc.is_constant and not port_out_desc.is_constant) or (port_out_desc.is_constant and not port_in_desc.is_constant):
 
-        #     match = parser.OFPMatch(eth_dst=dst)
-        #     actions = [parser.OFPActionOutput(new_out_port)]
-        #     self.add_flow(datapath, 1, match, actions)
+            # new port: greater than 1 or the smaller number
+            if port_in_desc.is_constant:
+                current_port = flow.out_port
+            else:
+                current_port = flow.in_port
+
+            new_port = None
+
+            for pno in self.ports[dpid].keys():
+                if (pno > current_port) and not (self.ports[dpid][pno].is_constant):
+                    new_port = pno
+                    break
+
+            if new_port is None:
+                for pno in self.ports[dpid].keys():
+                    if self.ports[dpid][pno].is_constant:
+                        new_port = pno
+                        break
+
+            if new_port is None:
+                return
+
+            # prepare new flow with higher priority
+            if port_in_desc.is_constant:
+                match = parser.OFPMatch(in_port=flow.in_port, eth_dst=flow.dst)
+                actions = [parser.OFPActionOutput(new_port)]
+            else:
+                match = parser.OFPMatch(in_port=new_port, eth_dst=flow.dst)
+                actions = [parser.OFPActionOutput(new_port)]
+
+            self.add_flow(datapath, 2, match, actions)
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
@@ -283,3 +320,33 @@ class FlowAwareSwitch(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
+
+        self.send_port_desc_stats_request(ev.msg.datapath)
+
+    def send_port_desc_stats_request(self, datapath):
+        ofp_parser = datapath.ofproto_parser
+
+        req = ofp_parser.OFPPortDescStatsRequest(datapath, 0)
+        datapath.send_msg(req)
+
+    @set_ev_cls(ofp_event.EventOFPPortDescStatsReply, MAIN_DISPATCHER)
+    def port_desc_stats_reply_handler(self, ev):
+        dpid = ev.msg.datapath.id
+
+        ports = []
+        for p in ev.msg.body:
+            ports.append('port_no=%d hw_addr=%s name=%s config=0x%08x '
+                        'state=0x%08x curr=0x%08x advertised=0x%08x '
+                        'supported=0x%08x peer=0x%08x curr_speed=%d '
+                        'max_speed=%d' %
+                        (p.port_no, p.hw_addr,
+                        p.name, p.config,
+                        p.state, p.curr, p.advertised,
+                        p.supported, p.peer, p.curr_speed,
+                        p.max_speed))
+            # if port_no < 3, mark the port as constant
+            if p.port_no < 3:
+                self.ports[dpid][p.port_no] = Port(p.hw_addr, is_constant=True)
+            else:
+                self.ports[dpid][p.port_no] = Port(p.hw_adddr, is_constant=False)
+        self.logger.info('OFPPortDescStatsReply received: %s', ports)
