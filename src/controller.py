@@ -52,7 +52,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
         self.interval = 1
 
         self.datapaths = {}
-        self.const_only_dpids = []
+        self.const_only_datapaths = []
         self.mac_to_port = {}
         self.flows = {}
         self.ports = {}
@@ -94,9 +94,9 @@ class FlowAwareSwitch(app_manager.RyuApp):
                 del self.datapaths[datapath.id]
                 del self.flows[datapath.id]
                 del self.ports[datapath.id]
-                for d in self.const_only_dpids:
+                for d in self.const_only_datapaths:
                     if d.id == datapath.id:
-                        self.const_only_dpids.remove(d)
+                        self.const_only_datapaths.remove(d)
                         break
 
     def _monitor(self):
@@ -157,11 +157,13 @@ class FlowAwareSwitch(app_manager.RyuApp):
                     if flow.is_elephant == False:
                         self.logger.info("\n FOUND NEW ELEPHANT! \n")
                         flow.is_elephant = True
+                        self.handle_elephant(ev.msg.datapath, flow, True)
 
                     else:
                         self.logger.info("\n FOUND ELEPHANT! \n")
+                else:
+                    flow.is_elephant = False
 
-                    self.handle_elephant(ev.msg.datapath, flow)
         self.logger.info("\n\n")
 
         ### display higher priority
@@ -201,8 +203,25 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
         self.logger.info("\n################################################################################################################\n")
 
+    def install_flow_pair(self, datapath, dst, src, in_port, out_port):
+        dpid = datapath.id
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
 
-    def handle_elephant(self, datapath, flow):
+        match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+        actions = [parser.OFPActionOutput(out_port)]
+        fl = Flow(dst, in_port, out_port, True, src)
+        self.add_flow(datapath, 2, match, actions, has_timeouts=True)
+        self.flows[dpid].append(fl)
+
+        match = parser.OFPMatch(in_port=out_port, eth_dst=src)
+        actions = [parser.OFPActionOutput(in_port)]
+        flb = Flow(src, out_port, in_port, True, dst)
+        self.add_flow(datapath, 2, match, actions, has_timeouts=True)
+        self.flows[dpid].append(flb)
+
+
+    def handle_elephant(self, datapath, flow, handle_const_switches=False):
 
         dpid  = datapath.id
 
@@ -210,93 +229,67 @@ class FlowAwareSwitch(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        port_in_desc = self.ports[dpid][flow.in_port]
-        port_out_desc = self.ports[dpid][flow.out_port]
+        elephant_flow_switches = []
+        elephant_flow_switches.append(datapath)
 
-        if (port_in_desc.is_constant and not port_out_desc.is_constant) or (port_out_desc.is_constant and not port_in_desc.is_constant):
+        for dp in self.datapaths:
+            did = dp.id
+            if did == datapath.id:
+                continue
 
-            # new port: greater than 1 or the smaller number
-            if port_in_desc.is_constant:
-                current_port = flow.out_port
-            else:
-                current_port = flow.in_port
+            fl = self.find_flow(did, flow.dst, flow.in_port, flow.out_port)
+            if fl is not None:
+                elephant_flow_switches.append(dp)
 
-            new_port = None
+        for swdp in elephant_flow_switches:
+            swid = swdp.id
+            port_in_desc = self.ports[swid][flow.in_port]
+            port_out_desc = self.ports[swid][flow.out_port]
 
-            for pno in self.ports[dpid].keys():
-                if (pno > current_port) and not (self.ports[dpid][pno].is_constant):
-                    new_port = pno
-                    break
+            if (port_in_desc.is_constant and not port_out_desc.is_constant) or (port_out_desc.is_constant and not port_in_desc.is_constant):
 
-            if new_port is None:
-                for pno in self.ports[dpid].keys():
-                    if not self.ports[dpid][pno].is_constant:
+                # new port: greater than 1 or the smaller number
+                if port_in_desc.is_constant:
+                    current_port = flow.out_port
+                else:
+                    current_port = flow.in_port
+
+                new_port = None
+
+                for pno in self.ports[swid].keys():
+                    if (pno > current_port) and not (self.ports[swid][pno].is_constant):
                         new_port = pno
                         break
 
-            if new_port is None:
-                return
+                if new_port is None:
+                    for pno in self.ports[swid].keys():
+                        if not self.ports[swid][pno].is_constant:
+                            new_port = pno
+                            break
 
-            self.logger.info("\nNew port is %d\n", new_port)
+                if new_port is None:
+                    return
 
-            # prepare new flow pair with higher priority
-            if port_in_desc.is_constant:
-                # change flow.out_port to new_port
-                match = parser.OFPMatch(in_port=flow.in_port, eth_dst=flow.dst)
-                actions = [parser.OFPActionOutput(new_port)]
-                fl = Flow(flow.dst, flow.in_port, new_port, True, flow.src)
-                self.add_flow(datapath, 2, match, actions, has_timeouts=True)
-                self.flows[dpid].append(fl)
+                self.logger.info("\nNew port is %d\n", new_port)
 
-                match = parser.OFPMatch(in_port=new_port, eth_dst=flow.src)
-                actions = [parser.OFPActionOutput(flow.in_port)]
-                flb = Flow(flow.src, new_port, flow.in_port, True, flow.dst)
-                self.add_flow(datapath, 2, match, actions, has_timeouts=True)
-                self.flows[dpid].append(flb)
-            else:
-                # change flow.in_port to new_port
-                match = parser.OFPMatch(in_port=new_port, eth_dst=flow.dst)
-                actions = [parser.OFPActionOutput(flow.out_port)]
-                fl = Flow(flow.dst, new_port, flow.out_port, True, flow.src)
-                self.add_flow(datapath, 2, match, actions, has_timeouts=True)
-                self.flows[dpid].append(fl)
+                # prepare new flow pair with higher priority
+                if port_in_desc.is_constant:
+                    # change flow.out_port to new_port
+                    self.install_flow_pair(swdp, flow.dst, flow.src, flow.in_port, new_port)
+                else:
+                    # change flow.in_port to new_port
+                    self.install_flow_pair(swdp, flow.dst, flow.src, new_port, flow.out_port)
 
-                match = parser.OFPMatch(in_port=flow.out_port, eth_dst=flow.src)
-                actions = [parser.OFPActionOutput(new_port)]
-                flb = Flow(flow.src, flow.out_port, new_port, True, flow.dst)
-                self.add_flow(datapath, 2, match, actions, has_timeouts=True)
-                self.flows[dpid].append(flb)
+        if handle_const_switches == False:
+            return
 
+        # install additional flow pairs in switches that has two const ports
+        for c_d in self.const_only_datapaths:
+            c_port_no1 = 1
+            c_port_no2 = 2
 
-            # install additional flow pairs in switches that has two const ports
-            for c_d in self.const_only_dpids:
-                c_port_no1 = 1
-                c_port_no2 = 2
-
-                match = parser.OFPMatch(in_port=c_port_no1, eth_dst=flow.dst)
-                actions = [parser.OFPActionOutput(c_port_no2)]
-                fl1 = Flow(flow.dst, c_port_no1, c_port_no2, True, flow.src)
-                self.add_flow(c_d, 2, match, actions, has_timeouts=True)
-                self.flows[c_d.id].append(fl1)
-
-                match = parser.OFPMatch(in_port=c_port_no2, eth_dst=flow.dst)
-                actions = [parser.OFPActionOutput(c_port_no1)]
-                fl2 = Flow(flow.dst, c_port_no2, c_port_no1, True, flow.src)
-                self.add_flow(c_d, 2, match, actions, has_timeouts=True)
-                self.flows[c_d.id].append(fl2)
-
-                # second versions of the flows above:
-                match = parser.OFPMatch(in_port=c_port_no1, eth_dst=flow.src)
-                actions = [parser.OFPActionOutput(c_port_no2)]
-                fl1b = Flow(flow.src, c_port_no1, c_port_no2, True, flow.dst)
-                self.add_flow(c_d, 2, match, actions, has_timeouts=True)
-                self.flows[c_d.id].append(fl1b)
-
-                match = parser.OFPMatch(in_port=c_port_no2, eth_dst=flow.src)
-                actions = [parser.OFPActionOutput(c_port_no1)]
-                fl2b = Flow(flow.src, c_port_no2, c_port_no1, True, flow.dst)
-                self.add_flow(c_d, 2, match, actions, has_timeouts=True)
-                self.flows[c_d.id].append(fl2b)
+            self.install_flow_pair(c_d, flow.dst, flow.src, c_port_no1, c_port_no2)
+            self.install_flow_pair(c_d, flow.dst, flow.src, c_port_no2, c_port_no1)
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None, has_timeouts=False):
         ofproto = datapath.ofproto
@@ -473,20 +466,5 @@ class FlowAwareSwitch(app_manager.RyuApp):
         if not has_only_constant:
             return
 
-        self.const_only_dpids.append(datapath)
+        self.const_only_datapaths.append(datapath)
         self.logger.info("DPID: %d has only const ports!", dpid)
-
-        # for port1_no in self.ports[dpid].keys():
-        #     if (self.ports[dpid][port1_no].is_constant == False):
-        #         continue
-        #     for port2_no in self.ports[dpid].keys():
-        #         if (port1_no == port2_no) or (self.ports[dpid][port2_no].is_constant == False):
-        #             continue
-
-        #         # create flow between two const ports
-        #         match = parser.OFPMatch(in_port=port1_no)
-        #         actions = [parser.OFPActionOutput(port2_no)]
-        #         self.add_flow(datapath, 1, match, actions)
-
-        #         fl = Flow(UNSPECIFIED_ADDRESS, port1_no, port2_no, False)
-        #         self.flows[dpid].append(fl)
