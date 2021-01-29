@@ -234,36 +234,48 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
         self.logger.info("Handle elephant")
         self.logger.info("Found elephant flow in %016x. [dst=%s] [src=%s]", datapath.id, flow.dst, flow.src)
+
+        if datapath in self.const_only_datapaths:
+            self.logger.info("Returning\n")
+            return
+
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        elephant_flow_switches = []
-        elephant_flow_switches.append(datapath)
+        elephant_flow_switches = {}
+        elephant_flow_switches[datapath] = flow
 
         for dpid in self.datapaths:
             if dpid == datapath.id:
                 continue
 
             fl = self.find_elephant_flow(dpid, flow.dst, flow.src)
-            self.logger.info("Found elephant flow in %016x. [dst=%s] [src=%s]", dpid, flow.dst, flow.src)
 
             result = ofctl_api.get_datapath(self, dpid=dpid)
 
             if fl is not None:
-                elephant_flow_switches.append(result)
+                self.logger.info("Found elephant flow in %016x. [dst=%s] [src=%s]", dpid, flow.dst, flow.src)
+                fl.is_elephant = True
+                elephant_flow_switches[result] = fl
 
-        for swdp in elephant_flow_switches:
+        for swdp in elephant_flow_switches.keys():
+
+            if swdp in self.const_only_datapaths:
+                break
+
             swid = swdp.id
-            port_in_desc = self.ports[swid][flow.in_port]
-            port_out_desc = self.ports[swid][flow.out_port]
+            swflow = elephant_flow_switches[swdp]
+
+            port_in_desc = self.ports[swid][swflow.in_port]
+            port_out_desc = self.ports[swid][swflow.out_port]
 
             if (port_in_desc.is_constant and not port_out_desc.is_constant) or (port_out_desc.is_constant and not port_in_desc.is_constant):
 
                 # new port: greater than 1 or the smaller number
                 if port_in_desc.is_constant:
-                    current_port = flow.out_port
+                    current_port = swflow.out_port
                 else:
-                    current_port = flow.in_port
+                    current_port = swflow.in_port
 
                 new_port = None
 
@@ -286,10 +298,10 @@ class FlowAwareSwitch(app_manager.RyuApp):
                 # prepare new flow pair with higher priority
                 if port_in_desc.is_constant:
                     # change flow.out_port to new_port
-                    self.install_flow_pair(swdp, flow.dst, flow.src, flow.in_port, new_port)
+                    self.install_flow_pair(swdp, swflow.dst, swflow.src, swflow.in_port, new_port)
                 else:
                     # change flow.in_port to new_port
-                    self.install_flow_pair(swdp, flow.dst, flow.src, new_port, flow.out_port)
+                    self.install_flow_pair(swdp, swflow.dst, swflow.src, new_port, swflow.out_port)
 
         if handle_const_switches == False:
             return
