@@ -21,11 +21,12 @@ HANDLE_ELEPHANT_FLOW_HARD_TIMEOUT = 255
 CONST_PORTS_NUMBER = 2
 
 class Flow():
-    def __init__(self, dst, in_port, out_port, is_elephant=False):
+    def __init__(self, dst, in_port, out_port, is_elephant=False, src=UNSPECIFIED_ADDRESS):
         self.dst = dst
         self.in_port = in_port
         self.out_port = out_port
         self.is_elephant = is_elephant
+        self.src = src
 
         self.last_byte_count = 0
 
@@ -157,10 +158,10 @@ class FlowAwareSwitch(app_manager.RyuApp):
                         self.logger.info("\n FOUND NEW ELEPHANT! \n")
                         flow.is_elephant = True
 
-                        self.handle_elephant(ev.msg.datapath, flow)
                     else:
                         self.logger.info("\n FOUND ELEPHANT! \n")
 
+                    self.handle_elephant(ev.msg.datapath, flow)
         self.logger.info("\n\n")
 
         ### display higher priority
@@ -229,60 +230,73 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
             if new_port is None:
                 for pno in self.ports[dpid].keys():
-                    if self.ports[dpid][pno].is_constant:
+                    if not self.ports[dpid][pno].is_constant:
                         new_port = pno
                         break
 
             if new_port is None:
                 return
 
-            # prepare new flow with higher priority
+            self.logger.info("\nNew port is %d\n", new_port)
+
+            # prepare new flow pair with higher priority
             if port_in_desc.is_constant:
+                # change flow.out_port to new_port
                 match = parser.OFPMatch(in_port=flow.in_port, eth_dst=flow.dst)
                 actions = [parser.OFPActionOutput(new_port)]
-                fl = Flow(flow.dst, flow.in_port, new_port, True)
+                fl = Flow(flow.dst, flow.in_port, new_port, True, flow.src)
+                self.add_flow(datapath, 2, match, actions, has_timeouts=True)
+                self.flows[dpid].append(fl)
+
+                match = parser.OFPMatch(in_port=new_port, eth_dst=flow.src)
+                actions = [parser.OFPActionOutput(flow.in_port)]
+                flb = Flow(flow.src, new_port, flow.in_port, True, flow.dst)
+                self.add_flow(datapath, 2, match, actions, has_timeouts=True)
+                self.flows[dpid].append(flb)
             else:
+                # change flow.in_port to new_port
                 match = parser.OFPMatch(in_port=new_port, eth_dst=flow.dst)
+                actions = [parser.OFPActionOutput(flow.out_port)]
+                fl = Flow(flow.dst, new_port, flow.out_port, True, flow.src)
+                self.add_flow(datapath, 2, match, actions, has_timeouts=True)
+                self.flows[dpid].append(fl)
+
+                match = parser.OFPMatch(in_port=flow.out_port, eth_dst=flow.src)
                 actions = [parser.OFPActionOutput(new_port)]
-                fl = Flow(flow.dst, new_port, flow.out_port, True)
+                flb = Flow(flow.src, flow.out_port, new_port, True, flow.dst)
+                self.add_flow(datapath, 2, match, actions, has_timeouts=True)
+                self.flows[dpid].append(flb)
 
-            self.add_flow(datapath, 2, match, actions, has_timeouts=True)
-            self.flows[dpid].append(fl)
 
-            # install additional flows in switches that has two const ports
+            # install additional flow pairs in switches that has two const ports
             for c_d in self.const_only_dpids:
                 c_port_no1 = 1
                 c_port_no2 = 2
 
                 match = parser.OFPMatch(in_port=c_port_no1, eth_dst=flow.dst)
                 actions = [parser.OFPActionOutput(c_port_no2)]
-                fl1 = Flow(flow.dst, c_port_no1, c_port_no2, True)
+                fl1 = Flow(flow.dst, c_port_no1, c_port_no2, True, flow.src)
                 self.add_flow(c_d, 2, match, actions, has_timeouts=True)
                 self.flows[c_d.id].append(fl1)
 
                 match = parser.OFPMatch(in_port=c_port_no2, eth_dst=flow.dst)
                 actions = [parser.OFPActionOutput(c_port_no1)]
-                fl2 = Flow(flow.dst, c_port_no2, c_port_no1, True)
+                fl2 = Flow(flow.dst, c_port_no2, c_port_no1, True, flow.src)
                 self.add_flow(c_d, 2, match, actions, has_timeouts=True)
                 self.flows[c_d.id].append(fl2)
 
+                # second versions of the flows above:
+                match = parser.OFPMatch(in_port=c_port_no1, eth_dst=flow.src)
+                actions = [parser.OFPActionOutput(c_port_no2)]
+                fl1b = Flow(flow.src, c_port_no1, c_port_no2, True, flow.dst)
+                self.add_flow(c_d, 2, match, actions, has_timeouts=True)
+                self.flows[c_d.id].append(fl1b)
 
-                        # for port1_no in self.ports[dpid].keys():
-        #     if (self.ports[dpid][port1_no].is_constant == False):
-        #         continue
-        #     for port2_no in self.ports[dpid].keys():
-        #         if (port1_no == port2_no) or (self.ports[dpid][port2_no].is_constant == False):
-        #             continue
-
-        #         # create flow between two const ports
-        #         match = parser.OFPMatch(in_port=port1_no)
-        #         actions = [parser.OFPActionOutput(port2_no)]
-        #         self.add_flow(datapath, 1, match, actions)
-
-        #         fl = Flow(UNSPECIFIED_ADDRESS, port1_no, port2_no, False)
-        #         self.flows[dpid].append(fl)
-
-
+                match = parser.OFPMatch(in_port=c_port_no2, eth_dst=flow.src)
+                actions = [parser.OFPActionOutput(c_port_no1)]
+                fl2b = Flow(flow.src, c_port_no2, c_port_no1, True, flow.dst)
+                self.add_flow(c_d, 2, match, actions, has_timeouts=True)
+                self.flows[c_d.id].append(fl2b)
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None, has_timeouts=False):
         ofproto = datapath.ofproto
@@ -364,7 +378,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
             self.add_flow(datapath, 1, match, actions)
             self.logger.info("\n UPDATING %s \n", match['eth_dst'])
 
-            fl = Flow(dst, in_port, out_port, False)
+            fl = Flow(dst, in_port, out_port, False, src)
             self.flows[dpid].append(fl)
 
         data = None
