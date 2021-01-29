@@ -11,6 +11,7 @@ from ryu.lib.packet import ether_types
 from ryu.app import simple_switch_13
 from ryu.lib import hub
 from operator import attrgetter
+import ryu.app.ofctl.api as ofctl_api
 
 MAX_PORT_VAL = 255
 UNSPECIFIED_ADDRESS = '00:00:00:00:00:00'
@@ -66,6 +67,14 @@ class FlowAwareSwitch(app_manager.RyuApp):
                 (fl.in_port == in_port) and
                 (fl.out_port == out_port)):
 
+                return fl
+
+        return None
+
+    def find_elephant_flow(self, dpid, dst, src):
+        for fl in self.flows[dpid]:
+            if ((fl.dst == dst) and
+                (fl.src == src)):
                 return fl
 
         return None
@@ -223,23 +232,25 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
     def handle_elephant(self, datapath, flow, handle_const_switches=False):
 
-        dpid  = datapath.id
-
         self.logger.info("Handle elephant")
+        self.logger.info("Found elephant flow in %016x. [dst=%s] [src=%s]", datapath.id, flow.dst, flow.src)
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         elephant_flow_switches = []
         elephant_flow_switches.append(datapath)
 
-        for dp in self.datapaths:
-            did = dp.id
-            if did == datapath.id:
+        for dpid in self.datapaths:
+            if dpid == datapath.id:
                 continue
 
-            fl = self.find_flow(did, flow.dst, flow.in_port, flow.out_port)
+            fl = self.find_elephant_flow(dpid, flow.dst, flow.src)
+            self.logger.info("Found elephant flow in %016x. [dst=%s] [src=%s]", dpid, flow.dst, flow.src)
+
+            result = ofctl_api.get_datapath(self, dpid=dpid)
+
             if fl is not None:
-                elephant_flow_switches.append(dp)
+                elephant_flow_switches.append(result)
 
         for swdp in elephant_flow_switches:
             swid = swdp.id
