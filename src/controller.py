@@ -15,26 +15,65 @@ import ryu.app.ofctl.api as ofctl_api
 
 MAX_PORT_VAL = 255
 UNSPECIFIED_ADDRESS = '00:00:00:00:00:00'
+UNSPECIFIED_PORT = 0
 
-HANDLE_ELEPHANT_FLOW_IDLE_TIMEOUT = 20
-HANDLE_ELEPHANT_FLOW_HARD_TIMEOUT = 255
+BASE_FLOW_PRIORITY = 1
+
+HANDLE_ELEPHANT_FLOW_IDLE_TIMEOUT = 2000
+HANDLE_ELEPHANT_FLOW_HARD_TIMEOUT = 25500
 
 CONST_PORTS_NUMBER = 2
 
+
 class Flow():
-    def __init__(self, dst, in_port, out_port, is_elephant=False, src=UNSPECIFIED_ADDRESS):
+    def __init__(self, src=None, dst=None, in_port=None, out_port=None, is_elephant=False, priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
         self.dst = dst
+        self.src = src
         self.in_port = in_port
         self.out_port = out_port
-        self.is_elephant = is_elephant
-        self.src = src
 
-        self.last_byte_count = 0
+        self.is_elephant = is_elephant
+
+        self.priority=priority
+
+        self.idle_timeout = tout_idle
+        self.hard_timeout = tout_hard
+
+        self.packet_count = 0
+        self.last_byte_count = 0 # TODO: remove
+        self.byte_count = 0
 
     def __eq__(self, other):
-        return ((self.dst == other.dst) and
-            (self.in_port == other.in_port) and
-            (self.out_port == other.out_port))
+        is_equal = True
+        is_equal = is_equal if (self.dst is None) and (other.dst is None) else is_equal and (self.dst == other.dst)
+        is_equal = is_equal if (self.src is None) and (other.src is None) else is_equal and (self.src == other.src)
+        is_equal = is_equal if (self.in_port is None) and (other.in_port is None) else is_equal and (self.in_port == other.in_port)
+        is_equal = is_equal if (self.out_port is None) and (other.out_port is None) else is_equal and (self.out_port == other.out_port)
+
+        return is_equal == True
+
+    def __str__(self):
+        header =  'packets  '
+        header += 'bytes    '
+        header += 'eth-dst           '
+        header += 'eth-src           '
+        header += 'in-port  '
+        header += 'out-port '
+        header += '\n'
+        header += '-------- -------- '
+        header += '----------------- '
+        header += '----------------- '
+        header += '-------- -------- '
+
+        info = '%017s' % self.dst if self.dst is not None else '%017s' % 'unspec.'
+        info += '%017s' % self.src if self.src is not None else '%017s' % 'unspec.'
+        info += '%8d' % self.packet_count
+        info += '%8d' % self.byte_count
+        info += '%08x' % self.in_port if self.in_port is not None else '%08x' % 'unspec.'
+        info += '%08x' % self.out_port if self.out_port is not None else '%08x' % 'unspec.'
+        info += '\n'
+
+        return header + '\n' + info
 
 class Port():
     def __init__(self, hw_addr, is_constant=False):
@@ -43,17 +82,19 @@ class Port():
 
 class FlowAwareSwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+    MONITOR_INTERVAL = 1 # in seconds
+    ELEPHANT_THRESHOLD = 10000000
     _CONTEXTS = {'stplib': stplib.Stp}
 
     def __init__(self, *args, **kwargs):
         super(FlowAwareSwitch, self).__init__(*args, **kwargs)
         self.stp = kwargs['stplib']
 
-        self.elephant_thr = 10000000
-        self.interval = 1
+        self.elephant_thr = self.ELEPHANT_THRESHOLD
+        self.interval = self.MONITOR_INTERVAL
 
         self.datapaths = {}
-        self.const_only_datapaths = []
+        self.const_only_datapaths = [] # TODO: remove
         self.mac_to_port = {}
         self.flows = {}
         self.ports = {}
@@ -129,64 +170,63 @@ class FlowAwareSwitch(app_manager.RyuApp):
     def _flow_stats_reply_handler(self, ev):
         body = ev.msg.body
         dpid = ev.msg.datapath.id
-        self.logger.info("\n################################################################################################################\n[dpid]%016x\n", dpid)
-        self.logger.info('datapath         '
-                         'in-port  eth-dst           '
-                         'out-port packets  bytes')
-        self.logger.info('---------------- '
-                         '-------- ----------------- '
-                         '-------- -------- --------')
-        for stat in sorted([flow for flow in body if flow.priority == 1],
-                           key=lambda flow: (flow.match['in_port'])):
+        # self.logger.info("\n################################################################################################################\n[dpid]%016x\n", dpid)
+        # self.logger.info('datapath         '
+        #                  'in-port  eth-dst           '
+        #                  'out-port packets  bytes')
+        # self.logger.info('---------------- '
+        #                  '-------- ----------------- '
+        #                  '-------- -------- --------')
+        # for stat in sorted([flow for flow in body if flow.priority == 1],
+        #                    key=lambda flow: (flow.match['in_port'])):
 
-            try:
-                flow = self.find_flow(dpid, stat.match['eth_dst'], stat.match['in_port'], stat.instructions[0].actions[0].port)
-            except KeyError:
-                flow = None
+        #     try:
+        #         flow = self.find_flow(dpid, stat.match['eth_dst'], stat.match['in_port'], stat.instructions[0].actions[0].port)
+        #     except KeyError:
+        #         flow = None
 
-            if flow is None:
-                self.logger.warning("\n%016x \nNo correlated flow object found!\n", dpid)
-            else:
+        #     if flow is None:
+        #         self.logger.warning("\n%016x \nNo correlated flow object found!\n", dpid)
+        #     else:
 
-                # calculate threshold
-                thr = (stat.byte_count - flow.last_byte_count) / self.interval
-                self.logger.info("Throughput = %d", thr)
+        #         # calculate threshold
+        #         thr = (stat.byte_count - flow.last_byte_count) / self.interval
+        #         self.logger.info("Throughput = %d", thr)
 
-                # update last packet count value
-                flow.last_byte_count = stat.byte_count
-                self.logger.info("Updating flow byte count")
+        #         # update last packet count value
+        #         flow.last_byte_count = stat.byte_count
+        #         self.logger.info("Updating flow byte count")
 
-                self.logger.info('%016x %8x %17s %8x %8d %8d',
-                                dpid,
-                                flow.in_port, flow.dst,
-                                flow.out_port,
-                                stat.packet_count, stat.byte_count)
+        #         self.logger.info('%016x %8x %17s %8x %8d %8d',
+        #                         dpid,
+        #                         flow.in_port, flow.dst,
+        #                         flow.out_port,
+        #                         stat.packet_count, stat.byte_count)
 
-                if thr > self.elephant_thr:
-                    if flow.is_elephant == False:
-                        self.logger.info("\n FOUND NEW ELEPHANT! \n")
-                        flow.is_elephant = True
-                        self.handle_elephant(ev.msg.datapath, flow, True)
+        #         if thr > self.elephant_thr:
+        #             if flow.is_elephant == False:
+        #                 self.logger.info("\n FOUND NEW ELEPHANT! \n")
+        #                 flow.is_elephant = True
+        #                 self.handle_elephant(ev.msg.datapath, flow, True)
 
-                    else:
-                        self.logger.info("\n FOUND ELEPHANT! \n")
-                else:
-                    flow.is_elephant = False
+        #             else:
+        #                 self.logger.info("\n FOUND ELEPHANT! \n")
+        #         else:
+        #             flow.is_elephant = False
 
-        self.logger.info("\n\n")
+        # self.logger.info("\n\n")
 
-        ### display higher priority
-        self.logger.info("\nHIGHER PRIORITY FLOWS\n")
-        self.logger.info('datapath         '
-                         'in-port  eth-dst           '
-                         'out-port packets  bytes')
-        self.logger.info('---------------- '
-                         '-------- ----------------- '
-                         '-------- -------- --------')
+        # ### display higher priority
+        # self.logger.info("\nHIGHER PRIORITY FLOWS\n")
+        # self.logger.info('datapath         '
+        #                  'in-port  eth-dst           '
+        #                  'out-port packets  bytes')
+        # self.logger.info('---------------- '
+        #                  '-------- ----------------- '
+        #                  '-------- -------- --------')
         for stat in body:
-            if not stat.priority == 2:
-                continue
-
+            # if not stat.priority == 2:
+            #     continue
             try:
                 flow = self.find_flow(dpid, stat.match['eth_dst'], stat.match['in_port'], stat.instructions[0].actions[0].port)
             except KeyError:
@@ -389,12 +429,12 @@ class FlowAwareSwitch(app_manager.RyuApp):
         # install a flow to avoid packet_in next time
         if out_port != ofproto.OFPP_FLOOD:
 
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
+            match = parser.OFPMatch(eth_dst=dst)
 
             self.add_flow(datapath, 1, match, actions)
             self.logger.info("\n UPDATING %s \n", match['eth_dst'])
 
-            fl = Flow(dst, in_port, out_port, False, src)
+            fl = Flow(dst=dst, out_port=out_port, is_elephant=False, src=src)
             self.flows[dpid].append(fl)
 
         data = None
@@ -425,7 +465,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
                     stplib.PORT_STATE_LISTEN: 'LISTEN',
                     stplib.PORT_STATE_LEARN: 'LEARN',
                     stplib.PORT_STATE_FORWARD: 'FORWARD'}
-        self.logger.debug("[dpid=%s][port=%d] state=%s",
+        self.logger.info("[dpid=%s][port=%d] state=%s",
                           dpid_str, ev.port_no, of_state[ev.port_state])
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
