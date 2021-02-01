@@ -1,4 +1,6 @@
 import time
+from ryu.ofproto import ofproto_v1_3_parser as ofparser
+from ryu.ofproto import ofproto_v1_3 as ofproto
 
 class FlowManager():
 
@@ -12,17 +14,20 @@ class FlowManager():
         self.elephant_handler = elephant_handler
 
         self.flows = {}
-        self.known_dpids = []
 
     # nested Flow class
     class Flow():
         BASE_FLOW_PRIORITY = 1
 
-        def __init__(self, src=None, dst=None, in_port=None, out_port=None, priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
-            self.dst = dst
-            self.src = src
-            self.in_port = in_port
-            self.out_port = out_port
+        def __init__(self, match, actions, priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
+
+            self.match = match
+            self.actions = actions
+
+            # self.dst = dst
+            # self.src = src
+            # self.in_port = in_port
+            # self.out_port = out_port
 
             self.is_elephant = False
 
@@ -39,10 +44,12 @@ class FlowManager():
         def __eq__(self, other):
             is_equal = True
 
-            is_equal = is_equal if (self.dst is None) and (other.dst is None) else is_equal and (self.dst == other.dst)
-            is_equal = is_equal if (self.src is None) and (other.src is None) else is_equal and (self.src == other.src)
-            is_equal = is_equal if (self.in_port is None) and (other.in_port is None) else is_equal and (self.in_port == other.in_port)
-            is_equal = is_equal if (self.out_port is None) and (other.out_port is None) else is_equal and (self.out_port == other.out_port)
+            is_equal = is_equal and (self.match == other.match)
+            is_equal = is_equal and (self.actions == other.actions)
+            # is_equal = is_equal if (self.dst is None) and (other.dst is None) else is_equal and (self.dst == other.dst)
+            # is_equal = is_equal if (self.src is None) and (other.src is None) else is_equal and (self.src == other.src)
+            # is_equal = is_equal if (self.in_port is None) and (other.in_port is None) else is_equal and (self.in_port == other.in_port)
+            # is_equal = is_equal if (self.out_port is None) and (other.out_port is None) else is_equal and (self.out_port == other.out_port)
             is_equal = is_equal and (self.idle_timeout == other.idle_timeout)
             is_equal = is_equal and (self.hard_timeout == other.hard_timeout)
             is_equal = is_equal and (self.priority == other.priority)
@@ -56,17 +63,32 @@ class FlowManager():
             header += 'in-port  '
             header += 'out-port '
             header += '\n'
-            header += '-------- -------- '
-            header += '----------------- '
-            header += '----------------- '
-            header += '-------- -------- '
+            header += ('-' * 8) + ' ' + ('-' * 8) + ' '
+            header += ('-' * 17) + ' ' + ('-' * 17) + ' '
+            header += ('-' * 8) + ' ' + ('-' * 8) + ' '
 
             info =  '%8d' % self.packet_count
-            info += '%8d' % self.byte_count
-            info += '%017s' % self.dst if self.dst is not None else '%017s' % 'unspec.'
-            info += '%017s' % self.src if self.src is not None else '%017s' % 'unspec.'
-            info += '%8d' % self.in_port if self.in_port is not None else '%08s' % 'unspec.'
-            info += '%8d' % self.out_port if self.out_port is not None else '%08s' % 'unspec.'
+            info += '|%8d' % self.byte_count
+
+            try:
+                dst = self.match['eth_dst']
+            except KeyError:
+                dst = None
+            try:
+                src = self.match['eth_src']
+            except KeyError:
+                src = None
+            try:
+                in_port = self.match['in_port']
+            except KeyError:
+                in_port = None
+
+            out_port = self.actions[0].port
+
+            info += '|%017s' % dst if dst is not None else '|%017s' % 'unspec.'
+            info += '|%017s' % src if src is not None else '|%017s' % 'unspec.'
+            info += '|%8d' % in_port if in_port is not None else '|%08s' % 'unspec.'
+            info += '|%8d' % out_port if out_port is not None else '|%08s' % 'unspec.'
             info += '\n'
 
             return header + '\n' + info
@@ -85,19 +107,29 @@ class FlowManager():
             self.byte_count = byte_count
 
 
-    def create_flow(self, dpid, src=None, dst=None, in_port=None, out_port=None, priority=Flow.BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
+    def create_flow(self, datapath, match, actions, priority=Flow.BASE_FLOW_PRIORITY, has_timeouts=False):
+        dpid = datapath.id
 
-        if dpid not in self.known_dpids:
-            self.known_dpids.append(dpid)
+        if dpid not in self.flows.keys():
             self.flows[dpid] = []
 
-        fl = self.find_flow(dpid, src, dst, in_port, out_port, priority, tout_idle, tout_hard)
+        if has_timeouts:
+            tout_idle = self.FLOW_IDLE_TIMEOUT
+            tout_hard = self.FLOW_HARD_TIMEOUT
+        else:
+            tout_idle = 0
+            tout_hard = 0
+
+        fl = self.find_flow(dpid, match, actions, priority, tout_idle, tout_hard)
 
         if fl is None:
-            self.flows[dpid].append(self.Flow(src, dst, in_port, out_port, priority, tout_idle, tout_hard))
+            self.flows[dpid].append(self.Flow(match, actions, priority, tout_idle, tout_hard))
+            self.__add_flow(datapath, self.flows[dpid][-1])
+            print("Added flow")
+            print(self.flows[dpid][-1])
 
-    def find_flow(self, dpid, src=None, dst=None, in_port=None, out_port=None, priority=Flow.BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
-        flow = self.Flow(src, dst, in_port, out_port, priority, tout_idle, tout_hard)
+    def find_flow(self, dpid, match, actions, priority=Flow.BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
+        flow = self.Flow(match, actions, priority, tout_idle, tout_hard)
 
         for fl in self.flows[dpid]:
             if fl == flow:
@@ -122,7 +154,7 @@ class FlowManager():
     """
     def get_flows(self):
         desc = ''
-        for dpid in self.known_dpids:
+        for dpid in self.flows.keys():
             desc += "\n%016x" % dpid + '\n'
             desc += '#' * 112 + '\n'
 
@@ -135,52 +167,33 @@ class FlowManager():
 
     def detect_elephants(self):
         elephants = []
-        for dpid in self.known_dpids:
+        for dpid in self.flows.keys():
             for flow in self.flows[dpid]:
                 if flow.throughput > self.ELEPHANT_THRESHOLD:
                     elephants.append((flow.src, flow.dst))
         return elephants
 
-    def remove_dpid(self, dpid):
-        del self.flows[dpid]
-        for d in self.known_dpids:
-            if d == dpid:
-                self.known_dpids.remove(d)
-                break
-
-    def run_handler(self):
-        self.elephant_handler()
-
-    def add_flow(self, datapath, priority, match, actions, buffer_id=None, has_timeouts=False):
+    def __add_flow(self, datapath, flow):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        if has_timeouts:
-            idl_tout = self.FLOW_IDLE_TIMEOUT
-            hrd_tout = self.FLOW_HARD_TIMEOUT
-        else:
-            idl_tout = 0
-            hrd_tout = 0
-
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                             actions)]
-        if buffer_id:
-            mod = parser.OFPFlowMod(datapath=datapath, buffer_id=buffer_id,
-                                    priority=priority, match=match,
-                                    instructions=inst, idle_timeout=idl_tout, hard_timeout=hrd_tout)
-        else:
-            mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
-                                    match=match, instructions=inst, idle_timeout=idl_tout, hard_timeout=hrd_tout)
+                                             flow.actions)]
+
+        mod = parser.OFPFlowMod(datapath=datapath, priority=flow.priority,
+                                match=flow.match, instructions=inst,
+                                idle_timeout=flow.idle_timeout, hard_timeout=flow.hard_timeout)
         datapath.send_msg(mod)
 
-    # def delete_flows(self, datapath):
-    #     ofproto = datapath.ofproto
-    #     parser = datapath.ofproto_parser
+    def delete_flows(self, datapath):
+        dpid = datapath.id
 
-    #     for dst in self.mac_to_port[datapath.id].keys():
-    #         match = parser.OFPMatch(eth_dst=dst)
-    #         mod = parser.OFPFlowMod(
-    #             datapath, command=ofproto.OFPFC_DELETE,
-    #             out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY,
-    #             priority=1, match=match)
-    #         datapath.send_msg(mod)
+        if dpid in self.flows.keys():
+            for flow in self.flows[dpid]:
+                mod = ofparser.OFPFlowMod(
+                    datapath, command=ofproto.OFPFC_DELETE,
+                    out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY,
+                    priority=flow.priority, match=flow.match)
+                datapath.send_msg(mod)
+
+            del self.flows[dpid]
