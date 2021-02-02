@@ -44,7 +44,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
         self.ports = {}
 
         self.stp.set_config({})
-        # self.monitor_thread = hub.spawn(self._monitor)
+        self.monitor_thread = hub.spawn(self._monitor)
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -67,7 +67,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
             for dp in self.datapaths.values():
                 self._request_stats(dp)
 
-            # desc = self.flow_manager.get_flows()
+            desc = self.flow_manager.get_flows()
             if desc != '':
                 self.logger.info("\n%s\n", desc)
 
@@ -89,7 +89,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
         dpid = ev.msg.datapath.id
         body = ev.msg.body
 
-        # self.flow_manager.update_flow_stats(dpid, body)
+        self.flow_manager.update_flow_stats(dpid, body)
 
     @set_ev_cls(stplib.EventPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -135,7 +135,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
             match = parser.OFPMatch(eth_dst=dst)
             self.logger.info("\n UPDATING %s \n", match['eth_dst'])
 
-            # self.flow_manager.create_flow(datapath, match, actions)
+            self.flow_manager.create_flow(datapath, match, actions)
 
         data = None
         # send packet_out in case of no buffer

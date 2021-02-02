@@ -19,7 +19,7 @@ class FlowManager():
     class Flow():
         BASE_FLOW_PRIORITY = 1
 
-        def __init__(self, match, actions, priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
+        def __init__(self, match, actions=[], priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
 
             self.match = match
             self.actions = actions
@@ -52,6 +52,7 @@ class FlowManager():
         def __eq__(self, other):
             is_equal = True
 
+            # check match.
             we = self.__resolve(self.match, 'eth_dst')
             they = self.__resolve(other.match, 'eth_dst')
             is_equal = is_equal and (we == they)
@@ -64,11 +65,16 @@ class FlowManager():
             they = self.__resolve(other.match, 'in_port')
             is_equal = is_equal and (we == they)
 
-            we = self.__resolve(self.match, 'out_port')
-            they = self.__resolve(other.match, 'out_port')
+            # check actions.
+            try:
+                we = self.actions[0].port if self.actions else None
+            except AttributeError:
+                we = None
+            try:
+                they = other.actions[0].port if other.actions else None
+            except AttributeError:
+                they = None
             is_equal = is_equal and (we == they)
-
-            is_equal = is_equal and (self.actions == other.actions)
 
             is_equal = is_equal and (self.idle_timeout == other.idle_timeout)
             is_equal = is_equal and (self.hard_timeout == other.hard_timeout)
@@ -93,7 +99,11 @@ class FlowManager():
             dst      = self.__resolve(self.match, 'eth_dst')
             src      = self.__resolve(self.match, 'eth_src')
             in_port  = self.__resolve(self.match, 'in_port')
-            out_port = self.actions[0].port
+
+            try:
+                out_port = self.actions[0].port if self.actions else None
+            except AttributeError:
+                out_port = None
 
             info += '|%017s' % dst if dst is not None else '|%017s' % 'unspec.'
             info += '|%017s' % src if src is not None else '|%017s' % 'unspec.'
@@ -150,14 +160,22 @@ class FlowManager():
     def update_flow_stats(self, dpid, stats):
         for stat in stats:
 
-            try:
-                flow = self.find_flow(dpid, stat.match['eth_dst'], stat.match['in_port'], stat.instructions[0].actions[0].port)
-            except KeyError:
-                flow = None
+            # print("Instructions: ")
+            # print(stat.instructions)
+            if stat.instructions:
+                actions = stat.instructions[0].actions if stat.instructions[0].actions else None
+            else:
+                actions = None
+
+            # print("Find:")
+            # print(actions)
+            flow = self.find_flow(dpid, stat.match, actions, stat.priority, stat.idle_timeout, stat.hard_timeout)
 
             if flow is None:
                 continue
             else:
+                # print("Update stats for flow:")
+                # print(flow)
                 flow.update_stats(stat.packet_count, stat.byte_count)
 
     """ Returns string with all flows description.
