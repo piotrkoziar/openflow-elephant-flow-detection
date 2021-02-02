@@ -41,15 +41,35 @@ class FlowManager():
             self.throughput = 0
             self.timestamp = time.time()
 
+        def __resolve(self, match, key):
+            try:
+                ret = match[key]
+            except KeyError:
+                ret = None
+
+            return ret
+
         def __eq__(self, other):
             is_equal = True
 
-            is_equal = is_equal and (self.match == other.match)
+            we = self.__resolve(self.match, 'eth_dst')
+            they = self.__resolve(other.match, 'eth_dst')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'eth_src')
+            they = self.__resolve(other.match, 'eth_src')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'in_port')
+            they = self.__resolve(other.match, 'in_port')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'out_port')
+            they = self.__resolve(other.match, 'out_port')
+            is_equal = is_equal and (we == they)
+
             is_equal = is_equal and (self.actions == other.actions)
-            # is_equal = is_equal if (self.dst is None) and (other.dst is None) else is_equal and (self.dst == other.dst)
-            # is_equal = is_equal if (self.src is None) and (other.src is None) else is_equal and (self.src == other.src)
-            # is_equal = is_equal if (self.in_port is None) and (other.in_port is None) else is_equal and (self.in_port == other.in_port)
-            # is_equal = is_equal if (self.out_port is None) and (other.out_port is None) else is_equal and (self.out_port == other.out_port)
+
             is_equal = is_equal and (self.idle_timeout == other.idle_timeout)
             is_equal = is_equal and (self.hard_timeout == other.hard_timeout)
             is_equal = is_equal and (self.priority == other.priority)
@@ -70,19 +90,9 @@ class FlowManager():
             info =  '%8d' % self.packet_count
             info += '|%8d' % self.byte_count
 
-            try:
-                dst = self.match['eth_dst']
-            except KeyError:
-                dst = None
-            try:
-                src = self.match['eth_src']
-            except KeyError:
-                src = None
-            try:
-                in_port = self.match['in_port']
-            except KeyError:
-                in_port = None
-
+            dst      = self.__resolve(self.match, 'eth_dst')
+            src      = self.__resolve(self.match, 'eth_src')
+            in_port  = self.__resolve(self.match, 'in_port')
             out_port = self.actions[0].port
 
             info += '|%017s' % dst if dst is not None else '|%017s' % 'unspec.'
@@ -125,8 +135,8 @@ class FlowManager():
         if fl is None:
             self.flows[dpid].append(self.Flow(match, actions, priority, tout_idle, tout_hard))
             self.__add_flow(datapath, self.flows[dpid][-1])
-            print("Added flow")
-            print(self.flows[dpid][-1])
+            # print("Added flow")
+            # print(self.flows[dpid][-1])
 
     def find_flow(self, dpid, match, actions, priority=Flow.BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
         flow = self.Flow(match, actions, priority, tout_idle, tout_hard)
