@@ -230,3 +230,17 @@ class FlowAwareSwitch(app_manager.RyuApp):
             return
 
         self.logger.info("DPID: %d has only const ports!", dpid)
+
+        in_port = 1
+        out_port = 2
+
+        actions = [parser.OFPActionOutput(out_port)]
+        match = parser.OFPMatch(in_port=in_port)
+        self.flow_manager.create_flow(datapath, match, actions)
+
+        in_port = 2
+        out_port = 1
+
+        actions = [parser.OFPActionOutput(out_port)]
+        match = parser.OFPMatch(in_port=in_port)
+        self.flow_manager.create_flow(datapath, match, actions)
