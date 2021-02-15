@@ -88,10 +88,12 @@ class FlowManager():
             header += 'eth-src           '
             header += 'in-port  '
             header += 'out-port '
+            header += 'throughput   '
             header += '\n'
             header += ('-' * 8) + ' ' + ('-' * 8) + ' '
             header += ('-' * 17) + ' ' + ('-' * 17) + ' '
             header += ('-' * 8) + ' ' + ('-' * 8) + ' '
+            header += ('-' * 12)
 
             info =  '%8d' % self.packet_count
             info += '|%8d' % self.byte_count
@@ -109,6 +111,7 @@ class FlowManager():
             info += '|%017s' % src if src is not None else '|%017s' % 'unspec.'
             info += '|%8d' % in_port if in_port is not None else '|%08s' % 'unspec.'
             info += '|%8d' % out_port if out_port is not None else '|%08s' % 'unspec.'
+            info += '|%12d' % self.throughput
             info += '\n'
 
             return header + '\n' + info
