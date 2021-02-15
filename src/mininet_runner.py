@@ -45,16 +45,16 @@ class ElephantFlowTopo(Topo):
         # Add links between border switches and middle switches
 
         # """ SM1 """
-        self.addLink( s1, s3 )
-        self.addLink( s2, s3 )
+        self.addLink( s1, s3, 3, 1 )
+        self.addLink( s2, s3, 3, 2 )
 
         # """ SM2 """
-        self.addLink( s1, s4 )
-        self.addLink( s2, s4 )
+        self.addLink( s1, s4, 4, 1 )
+        self.addLink( s2, s4, 4, 2 )
 
         # """ SM3 """
-        self.addLink( s1, s5 )
-        self.addLink( s2, s5 )
+        self.addLink( s1, s5, 5, 1 )
+        self.addLink( s2, s5, 5, 2 )
 
 
 def Test():

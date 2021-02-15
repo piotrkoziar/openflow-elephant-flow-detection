@@ -13,6 +13,11 @@ from ryu.lib import hub
 from operator import attrgetter
 import ryu.app.ofctl.api as ofctl_api
 from flow_manager import FlowManager
+from ryu.lib.packet import in_proto
+from ryu.lib.packet import ipv4
+from ryu.lib.packet import icmp
+from ryu.lib.packet import tcp
+from ryu.lib.packet import udp
 
 MAX_PORT_VAL = 255
 UNSPECIFIED_ADDRESS = '00:00:00:00:00:00'
@@ -22,6 +27,21 @@ CONST_PORTS_NUMBER = 2
 
 def dummy_handler():
     print("HELLO FROM HANDLER")
+
+class Path():
+    def __init__(self, dpid, port1, port2):
+        self.nodes = []
+        self.nodes.append(( dpid, port1, port2 ))
+
+def import_predef_paths():
+    paths = []
+    path1 = Path(1, 1, 3) # s1 <-> s3
+    # path1.nodes.append((3, 1, 2)) # s3 <-> s2, configuration can be skipped
+    path1.nodes.append((2, 1, 3)) # s2 <-> h2
+
+    paths.append(path1)
+
+    return paths
 
 class Port():
     def __init__(self, hw_addr, is_constant=False):
@@ -46,21 +66,27 @@ class FlowAwareSwitch(app_manager.RyuApp):
         self.stp.set_config({})
         self.monitor_thread = hub.spawn(self._monitor)
 
+    def _register_datapath(self, datapath):
+        if datapath.id not in self.datapaths:
+                self.logger.info('register datapath: %016x', datapath.id)
+                self.datapaths[datapath.id] = datapath
+                self.ports[datapath.id] = {}
+
+    def _unregister_datapath(self, datapath):
+        if datapath.id in self.datapaths:
+                self.logger.info('unregister datapath: %016x', datapath.id)
+                self.flow_manager.delete_flows(datapath)
+                del self.datapaths[datapath.id]
+                del self.ports[datapath.id]
+
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
     def _state_change_handler(self, ev):
         datapath = ev.datapath
         if ev.state == MAIN_DISPATCHER:
-            if datapath.id not in self.datapaths:
-                self.logger.debug('register datapath: %016x', datapath.id)
-                self.datapaths[datapath.id] = datapath
-                self.ports[datapath.id] = {}
+            self._register_datapath(datapath)
         elif ev.state == DEAD_DISPATCHER:
-            if datapath.id in self.datapaths:
-                self.logger.debug('unregister datapath: %016x', datapath.id)
-                self.flow_manager.delete_flows(datapath)
-                del self.datapaths[datapath.id]
-                del self.ports[datapath.id]
+            self._unregister_datapath(datapath)
 
     def _monitor(self):
         while True:
@@ -171,6 +197,9 @@ class FlowAwareSwitch(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         msg = ev.msg
+        datapath = ev.msg.datapath
+
+        self._register_datapath(datapath)
 
         self.logger.info('OFPSwitchFeatures received: '
                         'datapath_id=0x%016x n_buffers=%d '
@@ -179,7 +208,6 @@ class FlowAwareSwitch(app_manager.RyuApp):
                         msg.datapath_id, msg.n_buffers, msg.n_tables,
                         msg.auxiliary_id, msg.capabilities)
 
-        datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
@@ -244,3 +272,18 @@ class FlowAwareSwitch(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(out_port)]
         match = parser.OFPMatch(in_port=in_port)
         self.flow_manager.create_flow(datapath, match, actions)
+
+        paths = import_predef_paths()
+        for path in paths:
+            for (p_dpid, p_p1, p_p2) in path.nodes:
+                p_datapath = self.datapaths[p_dpid]
+
+                p_actions = [parser.OFPActionOutput(p_p2)]
+                p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP, in_port=p_p1)
+
+                self.flow_manager.create_flow(p_datapath, p_match, p_actions)
+
+                p_actions = [parser.OFPActionOutput(p_p1)]
+                p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP, in_port=p_p2)
+
+                self.flow_manager.create_flow(p_datapath, p_match, p_actions)
