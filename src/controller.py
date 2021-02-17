@@ -28,21 +28,6 @@ CONST_PORTS_NUMBER = 2
 def dummy_handler():
     print("HELLO FROM HANDLER")
 
-class Path():
-    def __init__(self, dpid, port1, port2):
-        self.nodes = []
-        self.nodes.append(( dpid, port1, port2 ))
-
-def import_predef_paths():
-    paths = []
-    path1 = Path(1, 1, 3) # s1 <-> s3
-    # path1.nodes.append((3, 1, 2)) # s3 <-> s2, configuration can be skipped
-    path1.nodes.append((2, 1, 3)) # s2 <-> h2
-
-    paths.append(path1)
-
-    return paths
-
 class Port():
     def __init__(self, hw_addr, is_constant=False):
         self.is_constant = is_constant
@@ -52,7 +37,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     _CONTEXTS = {'stplib': stplib.Stp}
 
-    MONITOR_INTERVAL = 1 # in seconds
+    MONITOR_INTERVAL = 4 # in seconds
 
     def __init__(self, *args, **kwargs):
         super(FlowAwareSwitch, self).__init__(*args, **kwargs)
@@ -145,9 +130,52 @@ class FlowAwareSwitch(app_manager.RyuApp):
         # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = in_port
 
+        base_path = self.flow_manager.path_manager.get_base_path()
+        p_p1, p_p2 = base_path[dpid]
+
+        if (eth.ethertype == ether_types.ETH_TYPE_IP) and p_p1 is not None and p_p2 is not None:
+
+            ip = pkt.get_protocol(ipv4.ipv4)
+            srcip = ip.src
+            dstip = ip.dst
+            protocol = ip.proto
+
+            # if ICMP Protocol
+            if protocol == in_proto.IPPROTO_ICMP:
+                p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, in_port=p_p1)
+                p_actions = [parser.OFPActionOutput(p_p2)]
+                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+                p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, in_port=p_p2)
+                p_actions = [parser.OFPActionOutput(p_p1)]
+                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+            #  if TCP Protocol
+            elif protocol == in_proto.IPPROTO_TCP:
+                t = pkt.get_protocol(tcp.tcp)
+                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, tcp_src=t.src_port, tcp_dst=t.dst_port, in_port=p_p1)
+                p_actions = [parser.OFPActionOutput(p_p2)]
+                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, tcp_src=t.src_port, tcp_dst=t.dst_port, in_port=p_p2)
+                p_actions = [parser.OFPActionOutput(p_p1)]
+                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+            #  If UDP Protocol
+            elif protocol == in_proto.IPPROTO_UDP:
+                u = pkt.get_protocol(udp.udp)
+                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, udp_src=u.src_port, udp_dst=u.dst_port, in_port=p_p1)
+                p_actions = [parser.OFPActionOutput(p_p2)]
+                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, udp_src=u.src_port, udp_dst=u.dst_port, in_port=p_p2)
+                p_actions = [parser.OFPActionOutput(p_p1)]
+                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
             self.logger.info("packet in. Dst in MAC table.\nSending [dpid=%s] [src=%s] [dst=%s] [in_port=%s] to out_port [out_port=%s]", dpid, src, dst, in_port, out_port)
+
         else:
             out_port = ofproto.OFPP_FLOOD
             self.logger.info("packet in. Unknown mac.\nFlooding %s %s %s %s", dpid, src, dst, in_port)
@@ -161,7 +189,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
             match = parser.OFPMatch(eth_dst=dst)
             self.logger.info("\n UPDATING %s \n", match['eth_dst'])
 
-            self.flow_manager.create_flow(datapath, match, actions)
+            self.flow_manager.create_flow(datapath, match, actions, 0)
 
         data = None
         # send packet_out in case of no buffer
@@ -272,18 +300,3 @@ class FlowAwareSwitch(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(out_port)]
         match = parser.OFPMatch(in_port=in_port)
         self.flow_manager.create_flow(datapath, match, actions)
-
-        paths = import_predef_paths()
-        for path in paths:
-            for (p_dpid, p_p1, p_p2) in path.nodes:
-                p_datapath = self.datapaths[p_dpid]
-
-                p_actions = [parser.OFPActionOutput(p_p2)]
-                p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP, in_port=p_p1)
-
-                self.flow_manager.create_flow(p_datapath, p_match, p_actions)
-
-                p_actions = [parser.OFPActionOutput(p_p1)]
-                p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP, in_port=p_p2)
-
-                self.flow_manager.create_flow(p_datapath, p_match, p_actions)

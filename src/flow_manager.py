@@ -1,6 +1,7 @@
 import time
 from ryu.ofproto import ofproto_v1_3_parser as ofparser
 from ryu.ofproto import ofproto_v1_3 as ofproto
+from path_manager import PathManager
 
 class FlowManager():
 
@@ -15,6 +16,8 @@ class FlowManager():
 
         self.flows = {}
 
+        self.path_manager = PathManager()
+
     # nested Flow class
     class Flow():
         BASE_FLOW_PRIORITY = 1
@@ -23,11 +26,6 @@ class FlowManager():
 
             self.match = match
             self.actions = actions
-
-            # self.dst = dst
-            # self.src = src
-            # self.in_port = in_port
-            # self.out_port = out_port
 
             self.is_elephant = False
 
@@ -181,6 +179,16 @@ class FlowManager():
                 # print(flow)
                 flow.update_stats(stat.packet_count, stat.byte_count)
 
+                if flow.throughput > self.ELEPHANT_THRESHOLD:
+                    if flow.is_elephant == False:
+                        print("FOUND NEW ELEPHANT")
+
+                    flow.is_elephant = True
+                    handle_elephant(flow)
+
+                else:
+                    flow.is_elephant = False
+
     """ Returns string with all flows description.
     """
     def get_flows(self):
@@ -195,14 +203,6 @@ class FlowManager():
             desc += '\n' + ('#' * 112) + '\n'
 
         return desc
-
-    def detect_elephants(self):
-        elephants = []
-        for dpid in self.flows.keys():
-            for flow in self.flows[dpid]:
-                if flow.throughput > self.ELEPHANT_THRESHOLD:
-                    elephants.append((flow.src, flow.dst))
-        return elephants
 
     def __add_flow(self, datapath, flow):
         ofproto = datapath.ofproto
@@ -228,3 +228,6 @@ class FlowManager():
                 datapath.send_msg(mod)
 
             del self.flows[dpid]
+
+    def handle_elephant(self, flow):
+        pass
