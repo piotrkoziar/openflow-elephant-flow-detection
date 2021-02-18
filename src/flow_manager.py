@@ -184,7 +184,7 @@ class FlowManager():
                         print("FOUND NEW ELEPHANT")
 
                     flow.is_elephant = True
-                    handle_elephant(flow)
+                    self.handle_elephant(flow)
 
                 else:
                     flow.is_elephant = False
