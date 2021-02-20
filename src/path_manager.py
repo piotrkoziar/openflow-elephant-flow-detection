@@ -20,48 +20,40 @@ class Path():
 
 class PathManager():
 
-    def _import_base_path(self):
-        # use this method to import base path to the PathManager module, e.g. from config file
-        path1 = Path(1, 1, 3) # s1 <-> s3
-        path1.append(2, 1, 3) # s2 <-> h2
+    def _import_paths(self):
+        # use this method to import paths to the PathManager module, e.g. from config file
 
-        self.base_path = path1
+        # base1
+        path_base = Path(1, 1, 3) # s1 <-> s3
+        path_base.append(2, 1, 3) # s2 <-> h2
+        self._path_variant[path_base] = 0
+        self.alt_paths[path_base] = []
 
-    def _import_alt_paths(self):
-        # use this method to import alt paths to the PathManager module, e.g. from config file
-        path1 = Path(1, 1, 4) # s1 <-> s4
-        path1.append(2, 1, 4) # s2 <-> h2
+        # alt1(base1)
+        path = Path(1, 1, 4) # s1 <-> s4
+        path.append(2, 1, 4) # s2 <-> h2
+        self.alt_paths[path_base].append(path)
 
-        self.alt_paths.append(path1)
+        # alt2(base1)
+        path = Path(1, 1, 5) # s1 <-> s5
+        path.append(2, 1, 5) # s2 <-> h2
+        self.alt_paths[path_base].append(path)
 
-        path1 = Path(1, 1, 5) # s1 <-> s5
-        path1.append(2, 1, 5) # s2 <-> h2
-
-        self.alt_paths.append(path1)
-
-        self.alt_number = 2
 
     def __init__(self):
-        self.base_path = Path()
-        self.alt_paths = []
-        self.alt_number = 0
+        self._path_variant = {}
+        self.alt_paths = {}
 
-        self._import_base_path()
-        self._import_base_path()
+        self._import_paths()
 
-        self._path_variant = 0
+    def get_base_paths(self):
+        return self.alt_paths.keys()
 
+    def get_alt_path(self, base_path):
 
-    def get_base_path(self):
-        return self.base_path
+        n_of_alt_paths = len(self.alt_paths[base_path])
+        idx = self._path_variant[base_path]
 
+        self._path_variant[base_path] = (self._path_variant[base_path] + 1) % n_of_alt_paths
 
-    def get_alt_path(self):
-        if self.alt_number <= 0:
-            return None
-
-        idx = self._path_variant
-
-        self._path_variant = (self._path_variant + 1) % self.alt_number
-
-        return self.alt_paths[idx]
+        return self.alt_paths[base_path][idx]

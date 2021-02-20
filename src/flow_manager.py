@@ -1,13 +1,13 @@
 import time
 from ryu.ofproto import ofproto_v1_3_parser as ofparser
 from ryu.ofproto import ofproto_v1_3 as ofproto
-from path_manager import PathManager
+from path_manager import Path
 
 class FlowManager():
 
     ELEPHANT_THRESHOLD = 10000000
     FLOW_IDLE_TIMEOUT = 20 # in seconds
-    FLOW_HARD_TIMEOUT = 25 # in seconds
+    FLOW_HARD_TIMEOUT = 2500 # in seconds
 
     def __init__(self, elephant_handler):
         self.elephant_thr = self.ELEPHANT_THRESHOLD
@@ -16,13 +16,11 @@ class FlowManager():
 
         self.flows = {}
 
-        self.path_manager = PathManager()
-
     # nested Flow class
     class Flow():
         BASE_FLOW_PRIORITY = 1
 
-        def __init__(self, match, actions=[], priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0):
+        def __init__(self, match, actions=[], priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0, path=None):
 
             self.match = match
             self.actions = actions
@@ -38,6 +36,8 @@ class FlowManager():
             self.byte_count = 0
             self.throughput = 0
             self.timestamp = time.time()
+
+            self.path = path
 
         def __resolve(self, match, key):
             try:
@@ -160,7 +160,7 @@ class FlowManager():
             self.byte_count = byte_count
 
 
-    def create_flow(self, datapath, match, actions, priority=Flow.BASE_FLOW_PRIORITY, has_timeouts=False):
+    def create_flow(self, datapath, match, actions, priority=Flow.BASE_FLOW_PRIORITY, has_timeouts=False, path=None):
         dpid = datapath.id
 
         if dpid not in self.flows.keys():
@@ -176,7 +176,7 @@ class FlowManager():
         fl = self.find_flow(dpid, match, actions, priority, tout_idle, tout_hard)
 
         if fl is None:
-            self.flows[dpid].append(self.Flow(match, actions, priority, tout_idle, tout_hard))
+            self.flows[dpid].append(self.Flow(match, actions, priority, tout_idle, tout_hard, path))
             self.__add_flow(datapath, self.flows[dpid][-1])
             # print("Added flow")
             # print(self.flows[dpid][-1])
@@ -262,4 +262,7 @@ class FlowManager():
             del self.flows[dpid]
 
     def handle_elephant(self, flow):
-        pass
+        if flow.path is not None:
+            print("FLOW PATH will be changed!")
+        else:
+            print("NO PATH in elephant flow!")

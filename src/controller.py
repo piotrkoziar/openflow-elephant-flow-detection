@@ -133,15 +133,15 @@ class FlowAwareSwitch(app_manager.RyuApp):
             p_out = p2
         else:
             # base path does not work
-            pass
+            return
 
         p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, in_port=p_in)
         p_actions = [parser.OFPActionOutput(p_out)]
-        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=path)
 
         p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, in_port=p_out)
         p_actions = [parser.OFPActionOutput(p_in)]
-        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=path)
 
     """
     @param in_port is the switch port on which the packet was received.
@@ -162,15 +162,15 @@ class FlowAwareSwitch(app_manager.RyuApp):
             p_out = p2
         else:
             # base path does not work
-            pass
+            return
 
         p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, tcp_src=src_port, tcp_dst=dst_port, in_port=p_in)
         p_actions = [parser.OFPActionOutput(p_out)]
-        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=path)
 
         p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, tcp_src=dst_port, tcp_dst=src_port, in_port=p_out)
         p_actions = [parser.OFPActionOutput(p_in)]
-        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=path)
 
     """
     @param in_port is the switch port on which the packet was received.
@@ -191,15 +191,15 @@ class FlowAwareSwitch(app_manager.RyuApp):
             p_out = p2
         else:
             # base path does not work
-            pass
+            return
 
         p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, udp_src=src_port, udp_dst=dst_port, in_port=p_in)
         p_actions = [parser.OFPActionOutput(p_out)]
-        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=path)
 
         p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, udp_src=dst_port, udp_dst=src_port, in_port=p_out)
         p_actions = [parser.OFPActionOutput(p_in)]
-        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=path)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -213,21 +213,28 @@ class FlowAwareSwitch(app_manager.RyuApp):
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
 
-        base_path = self.path_manager.get_base_path()
+        skip_path_installation = 0
+        base_paths = self.path_manager.get_base_paths()
 
-        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
+        if len(base_paths) > 0:
+            base_path = base_paths[0] # Since topology is rather simple, we use only one base path.
+        else:
+            # we do not have any paths defined!
+            skip_path_installation = 1
+
+        if eth.ethertype == ether_types.ETH_TYPE_LLDP and not skip_path_installation:
             # ignore lldp packet
             return
-        elif eth.ethertype == ether_types.ETH_TYPE_IPV6:
+        elif eth.ethertype == ether_types.ETH_TYPE_IPV6 and not skip_path_installation:
             # ignore multicast dns and router solicitation messages sent by hosts
             # dst: 33:33:00:00:00:fb or dst: 33:33:00:00:00:02
             return
-        elif eth.ethertype == ether_types.ETH_TYPE_ARP:
+        elif eth.ethertype == ether_types.ETH_TYPE_ARP and not skip_path_installation:
             self.logger.info("[%d]GOT ARP on port [%d]!", dpid, in_port)
 
             self._apply_path_simple(datapath, ether_types.ETH_TYPE_ARP, base_path)
 
-        elif (eth.ethertype == ether_types.ETH_TYPE_IP):
+        elif (eth.ethertype == ether_types.ETH_TYPE_IP) and not skip_path_installation:
             self.logger.info("[%d]IPv4 on port [%d]:", dpid, in_port)
             ip = pkt.get_protocol(ipv4.ipv4)
             srcip = ip.src
