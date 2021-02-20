@@ -6,8 +6,8 @@ from path_manager import PathManager
 class FlowManager():
 
     ELEPHANT_THRESHOLD = 10000000
-    FLOW_IDLE_TIMEOUT = 2000
-    FLOW_HARD_TIMEOUT = 25500
+    FLOW_IDLE_TIMEOUT = 20 # in seconds
+    FLOW_HARD_TIMEOUT = 25 # in seconds
 
     def __init__(self, elephant_handler):
         self.elephant_thr = self.ELEPHANT_THRESHOLD
@@ -61,6 +61,38 @@ class FlowManager():
 
             we = self.__resolve(self.match, 'in_port')
             they = self.__resolve(other.match, 'in_port')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'eth_type')
+            they = self.__resolve(other.match, 'eth_type')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'ipv4_src')
+            they = self.__resolve(other.match, 'ipv4_src')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'ipv4_dst')
+            they = self.__resolve(other.match, 'ipv4_dst')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'ip_proto')
+            they = self.__resolve(other.match, 'ip_proto')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'udp_src')
+            they = self.__resolve(other.match, 'udp_src')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'udp_dst')
+            they = self.__resolve(other.match, 'udp_dst')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'tcp_src')
+            they = self.__resolve(other.match, 'tcp_src')
+            is_equal = is_equal and (we == they)
+
+            we = self.__resolve(self.match, 'tcp_dst')
+            they = self.__resolve(other.match, 'tcp_dst')
             is_equal = is_equal and (we == they)
 
             # check actions.

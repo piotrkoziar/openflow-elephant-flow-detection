@@ -17,6 +17,7 @@ from ryu.lib.packet import ipv4
 from ryu.lib.packet import icmp
 from ryu.lib.packet import tcp
 from ryu.lib.packet import udp
+from path_manager import PathManager
 
 MAX_PORT_VAL = 255
 UNSPECIFIED_ADDRESS = '00:00:00:00:00:00'
@@ -35,11 +36,12 @@ class Port():
 class FlowAwareSwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
-    MONITOR_INTERVAL = 10 # in seconds
+    MONITOR_INTERVAL = 2 # in seconds
 
     def __init__(self, *args, **kwargs):
         super(FlowAwareSwitch, self).__init__(*args, **kwargs)
         self.flow_manager = FlowManager(dummy_handler)
+        self.path_manager = PathManager()
 
         self.datapaths = {}
         self.mac_to_port = {}
@@ -98,6 +100,107 @@ class FlowAwareSwitch(app_manager.RyuApp):
 
         self.flow_manager.update_flow_stats(dpid, body)
 
+    def _apply_path_simple(self, datapath, ether_type, path):
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+
+        p_in, p_out = path[dpid]
+
+        p_match = parser.OFPMatch(eth_type=ether_type, in_port=p_in)
+        p_actions = [parser.OFPActionOutput(p_out)]
+        self.flow_manager.create_flow(datapath, p_match, p_actions)
+
+        p_match = parser.OFPMatch(eth_type=ether_type, in_port=p_out)
+        p_actions = [parser.OFPActionOutput(p_in)]
+        self.flow_manager.create_flow(datapath, p_match, p_actions)
+
+    """
+    @param in_port is the switch port on which the packet was received.
+    @param dstip is the destination of the packet that was received.
+        In other words, packet that occurs on @param in_port is forwarded to the destip.
+    """
+    def _apply_path_icmp(self, datapath, path, in_port, srcip, dstip):
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+        protocol = in_proto.IPPROTO_ICMP
+
+        p1, p2 = path[dpid]
+        if p2 == in_port:
+            p_in = p2
+            p_out = p1
+        elif p1 == in_port:
+            p_in = p1
+            p_out = p2
+        else:
+            # base path does not work
+            pass
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, in_port=p_in)
+        p_actions = [parser.OFPActionOutput(p_out)]
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, in_port=p_out)
+        p_actions = [parser.OFPActionOutput(p_in)]
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+    """
+    @param in_port is the switch port on which the packet was received.
+    @param dstip is the destination of the packet that was received.
+        In other words, packet that occurs on @param in_port is forwarded to the destip.
+    """
+    def _apply_path_tcp(self, datapath, path, in_port, srcip, dstip, src_port, dst_port):
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+        protocol = in_proto.IPPROTO_TCP
+
+        p1, p2 = path[dpid]
+        if p2 == in_port:
+            p_in = p2
+            p_out = p1
+        elif p1 == in_port:
+            p_in = p1
+            p_out = p2
+        else:
+            # base path does not work
+            pass
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, tcp_src=src_port, tcp_dst=dst_port, in_port=p_in)
+        p_actions = [parser.OFPActionOutput(p_out)]
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, tcp_src=dst_port, tcp_dst=src_port, in_port=p_out)
+        p_actions = [parser.OFPActionOutput(p_in)]
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+    """
+    @param in_port is the switch port on which the packet was received.
+    @param dstip is the destination of the packet that was received.
+        In other words, packet that occurs on @param in_port is forwarded to the destip.
+    """
+    def _apply_path_udp(self, datapath, path, in_port, srcip, dstip, src_port, dst_port):
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+        protocol = in_proto.IPPROTO_UDP
+
+        p1, p2 = path[dpid]
+        if p2 == in_port:
+            p_in = p2
+            p_out = p1
+        elif p1 == in_port:
+            p_in = p1
+            p_out = p2
+        else:
+            # base path does not work
+            pass
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, udp_src=src_port, udp_dst=dst_port, in_port=p_in)
+        p_actions = [parser.OFPActionOutput(p_out)]
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, udp_src=dst_port, udp_dst=src_port, in_port=p_out)
+        p_actions = [parser.OFPActionOutput(p_in)]
+        self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         msg = ev.msg
@@ -110,18 +213,7 @@ class FlowAwareSwitch(app_manager.RyuApp):
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
 
-        base_path = self.flow_manager.path_manager.get_base_path()
-        p1, p2 = base_path[dpid]
-
-        if p2 == in_port:
-            p_in = p2
-            p_out = p1
-        elif p1 == in_port:
-            p_in = p1
-            p_out = p2
-        else:
-            # base path does not work
-            pass
+        base_path = self.path_manager.get_base_path()
 
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
@@ -132,15 +224,10 @@ class FlowAwareSwitch(app_manager.RyuApp):
             return
         elif eth.ethertype == ether_types.ETH_TYPE_ARP:
             self.logger.info("[%d]GOT ARP on port [%d]!", dpid, in_port)
-            p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP, in_port=p_in)
-            p_actions = [parser.OFPActionOutput(p_out)]
-            self.flow_manager.create_flow(datapath, p_match, p_actions)
 
-            p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP, in_port=p_out)
-            p_actions = [parser.OFPActionOutput(p_in)]
-            self.flow_manager.create_flow(datapath, p_match, p_actions)
+            self._apply_path_simple(datapath, ether_types.ETH_TYPE_ARP, base_path)
 
-        elif (eth.ethertype == ether_types.ETH_TYPE_IP) and p_in is not None and p_out is not None:
+        elif (eth.ethertype == ether_types.ETH_TYPE_IP):
             self.logger.info("[%d]IPv4 on port [%d]:", dpid, in_port)
             ip = pkt.get_protocol(ipv4.ipv4)
             srcip = ip.src
@@ -150,37 +237,19 @@ class FlowAwareSwitch(app_manager.RyuApp):
             # if ICMP Protocol
             if protocol == in_proto.IPPROTO_ICMP:
                 self.logger.info("[%d]GOT ICMP on port [%d]!", dpid, in_port)
-                p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, in_port=p_in)
-                p_actions = [parser.OFPActionOutput(p_out)]
-                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
-
-                p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, in_port=p_out)
-                p_actions = [parser.OFPActionOutput(p_in)]
-                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+                self._apply_path_icmp(datapath, base_path, in_port, srcip, dstip)
 
             #  if TCP Protocol
             elif protocol == in_proto.IPPROTO_TCP:
-                self.logger.info("[%d]GOT TCP on port [%d]!", dpid, in_port)
+                self.logger.info("[%d]GOT TCP on port [%d], srcip: %s!", dpid, in_port, srcip)
                 t = pkt.get_protocol(tcp.tcp)
-                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, tcp_src=t.src_port, tcp_dst=t.dst_port, in_port=p_in)
-                p_actions = [parser.OFPActionOutput(p_out)]
-                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
-
-                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, tcp_src=t.src_port, tcp_dst=t.dst_port, in_port=p_out)
-                p_actions = [parser.OFPActionOutput(p_in)]
-                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+                self._apply_path_tcp(datapath, base_path, in_port, srcip, dstip, t.src_port, t.dst_port)
 
             #  If UDP Protocol
             elif protocol == in_proto.IPPROTO_UDP:
-                self.logger.info("[%d]GOT UDP on port [%d]!", dpid, in_port)
+                self.logger.info("[%d]GOT UDP on port [%d], srcip: %s!", dpid, in_port, srcip)
                 u = pkt.get_protocol(udp.udp)
-                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, udp_src=u.src_port, udp_dst=u.dst_port, in_port=p_in)
-                p_actions = [parser.OFPActionOutput(p_out)]
-                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
-
-                match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, udp_src=u.src_port, udp_dst=u.dst_port, in_port=p_out)
-                p_actions = [parser.OFPActionOutput(p_in)]
-                self.flow_manager.create_flow(datapath, p_match, p_actions, has_timeouts=True)
+                self._apply_path_udp(datapath, base_path, in_port, srcip, dstip, u.src_port, u.dst_port)
 
         else:
             self.logger.info("GOT ETHERTYPE: %d", eth.ethertype)
