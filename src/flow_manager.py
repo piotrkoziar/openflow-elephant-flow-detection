@@ -1,11 +1,13 @@
 import time
 from ryu.ofproto import ofproto_v1_3_parser as ofparser
 from ryu.ofproto import ofproto_v1_3 as ofproto
-from path_manager import Path
+from ryu.lib.packet import ether_types
+from ryu.lib.packet import in_proto
+import path_manager as pm
 
 class FlowManager():
 
-    ELEPHANT_THRESHOLD = 10000000
+    ELEPHANT_THRESHOLD = 100000
     FLOW_IDLE_TIMEOUT = 20 # in seconds
     FLOW_HARD_TIMEOUT = 2500 # in seconds
 
@@ -20,12 +22,12 @@ class FlowManager():
     class Flow():
         BASE_FLOW_PRIORITY = 1
 
-        def __init__(self, match, actions=[], priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0, path=None):
+        def __init__(self, match, actions=[], priority=BASE_FLOW_PRIORITY, tout_idle=0, tout_hard=0, path=None, is_elephant=False):
 
             self.match = match
             self.actions = actions
 
-            self.is_elephant = False
+            self.is_elephant = is_elephant
 
             self.priority=priority
 
@@ -160,7 +162,7 @@ class FlowManager():
             self.byte_count = byte_count
 
 
-    def create_flow(self, datapath, match, actions, priority=Flow.BASE_FLOW_PRIORITY, has_timeouts=False, path=None):
+    def create_flow(self, datapath, match, actions, priority=Flow.BASE_FLOW_PRIORITY, has_timeouts=False, path=None, is_elephant=False):
         dpid = datapath.id
 
         if dpid not in self.flows.keys():
@@ -176,7 +178,7 @@ class FlowManager():
         fl = self.find_flow(dpid, match, actions, priority, tout_idle, tout_hard)
 
         if fl is None:
-            self.flows[dpid].append(self.Flow(match, actions, priority, tout_idle, tout_hard, path))
+            self.flows[dpid].append(self.Flow(match, actions, priority, tout_idle, tout_hard, path, is_elephant))
             self.__add_flow(datapath, self.flows[dpid][-1])
             # print("Added flow")
             # print(self.flows[dpid][-1])
@@ -190,7 +192,9 @@ class FlowManager():
 
         return None
 
-    def update_flow_stats(self, dpid, stats):
+    def update_flow_stats(self, datapath, stats):
+        dpid = datapath.id
+
         for stat in stats:
 
             # print("Instructions: ")
@@ -216,7 +220,7 @@ class FlowManager():
                         print("FOUND NEW ELEPHANT")
 
                     flow.is_elephant = True
-                    self.handle_elephant(flow)
+                    self.handle_elephant(datapath, flow)
 
                 else:
                     flow.is_elephant = False
@@ -261,8 +265,167 @@ class FlowManager():
 
             del self.flows[dpid]
 
-    def handle_elephant(self, flow):
-        if flow.path is not None:
-            print("FLOW PATH will be changed!")
+    def apply_path_simple(self, datapath, ether_type, path, is_elephant=False):
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+
+        p_in, p_out = path[dpid]
+
+        p_match = parser.OFPMatch(eth_type=ether_type, in_port=p_in)
+        p_actions = [parser.OFPActionOutput(p_out)]
+        self.create_flow(datapath, p_match, p_actions, is_elephant=is_elephant)
+
+        p_match = parser.OFPMatch(eth_type=ether_type, in_port=p_out)
+        p_actions = [parser.OFPActionOutput(p_in)]
+        self.create_flow(datapath, p_match, p_actions, is_elephant=is_elephant)
+
+    """
+    @param in_port is the switch port on which the packet was received.
+    @param dstip is the destination of the packet that was received.
+        In other words, packet that occurs on @param in_port is forwarded to the destip.
+    """
+    def apply_path_icmp(self, datapath, path, in_port, srcip, dstip, is_elephant=False):
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+        protocol = in_proto.IPPROTO_ICMP
+
+        p1, p2 = path[dpid]
+        if p2 == in_port:
+            p_in = p2
+            p_out = p1
+        elif p1 == in_port:
+            p_in = p1
+            p_out = p2
         else:
-            print("NO PATH in elephant flow!")
+            # base path does not work
+            return
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, in_port=p_in)
+        p_actions = [parser.OFPActionOutput(p_out)]
+        self.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=None if is_elephant else path, is_elephant=is_elephant)
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, in_port=p_out)
+        p_actions = [parser.OFPActionOutput(p_in)]
+        self.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=None if is_elephant else path, is_elephant=is_elephant)
+
+    """
+    @param in_port is the switch port on which the packet was received.
+    @param dstip is the destination of the packet that was received.
+        In other words, packet that occurs on @param in_port is forwarded to the destip.
+    """
+    def apply_path_tcp(self, datapath, path, in_port, srcip, dstip, src_port, dst_port, is_elephant=False):
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+        protocol = in_proto.IPPROTO_TCP
+
+        p1, p2 = path[dpid]
+        if p2 == in_port:
+            p_in = p2
+            p_out = p1
+        elif p1 == in_port:
+            p_in = p1
+            p_out = p2
+        else:
+            # base path does not work
+            return
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, tcp_src=src_port, tcp_dst=dst_port, in_port=p_in)
+        p_actions = [parser.OFPActionOutput(p_out)]
+        self.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=None if is_elephant else path, is_elephant=is_elephant)
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, tcp_src=dst_port, tcp_dst=src_port, in_port=p_out)
+        p_actions = [parser.OFPActionOutput(p_in)]
+        self.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=None if is_elephant else path, is_elephant=is_elephant)
+
+    """
+    @param in_port is the switch port on which the packet was received.
+    @param dstip is the destination of the packet that was received.
+        In other words, packet that occurs on @param in_port is forwarded to the destip.
+    """
+    def apply_path_udp(self, datapath, path, in_port, srcip, dstip, src_port, dst_port, is_elephant=False):
+        dpid = datapath.id
+        parser = datapath.ofproto_parser
+        protocol = in_proto.IPPROTO_UDP
+
+        p1, p2 = path[dpid]
+        if p2 == in_port:
+            p_in = p2
+            p_out = p1
+        elif p1 == in_port:
+            p_in = p1
+            p_out = p2
+        else:
+            # base path does not work
+            return
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip, ip_proto=protocol, udp_src=src_port, udp_dst=dst_port, in_port=p_in)
+        p_actions = [parser.OFPActionOutput(p_out)]
+        self.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=None if is_elephant else path, is_elephant=is_elephant)
+
+        p_match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=dstip, ipv4_dst=srcip, ip_proto=protocol, udp_src=dst_port, udp_dst=src_port, in_port=p_out)
+        p_actions = [parser.OFPActionOutput(p_in)]
+        self.create_flow(datapath, p_match, p_actions, has_timeouts=True, path=None if is_elephant else path, is_elephant=is_elephant)
+
+    def handle_elephant(self, datapath, flow):
+        dpid = datapath.id
+        path = flow.path
+
+        if path is not None:
+            print("FLOW PATH will be changed!", dpid)
+
+            new_path = pm.path_manager.get_alt_path(dpid, path)
+
+            try:
+                ipproto = flow.match['ip_proto']
+            except KeyError:
+                ipproto = None
+
+            if ipproto is None:
+                try:
+                    ethtype = flow.match['eth_type']
+                except KeyError:
+                    ethtype = None
+                    return
+
+                if ethtype is not None:
+                    self.apply_path_simple(datapath, ethtype, new_path, True)
+
+            elif ipproto == in_proto.IPPROTO_ICMP:
+                try:
+                    in_port = flow.match['in_port']
+                    srcip = flow.match['ipv4_src']
+                    dstip = flow.match['ipv4_dst']
+                except KeyError:
+                    print("Something went wrong...KeyError, proto ICMP")
+                    return
+
+                self.apply_path_icmp(datapath, new_path, in_port, srcip, dstip, True)
+
+            elif ipproto == in_proto.IPPROTO_TCP:
+                try:
+                    in_port = flow.match['in_port']
+                    srcip = flow.match['ipv4_src']
+                    dstip = flow.match['ipv4_dst']
+                    src_port = flow.match['tcp_src']
+                    dst_port = flow.match['tcp_dst']
+                except KeyError:
+                    print("Something went wrong...KeyError, proto TCP")
+                    return
+
+                self.apply_path_tcp(datapath, new_path, in_port, srcip, dstip, src_port, dst_port, True)
+
+            elif ipproto == in_proto.IPPROTO_UDP:
+                try:
+                    in_port = flow.match['in_port']
+                    srcip = flow.match['ipv4_src']
+                    dstip = flow.match['ipv4_dst']
+                    src_port = flow.match['udp_src']
+                    dst_port = flow.match['udp_dst']
+                except KeyError:
+                    print("Something went wrong...KeyError, proto UDP")
+                    return
+
+                self.apply_path_udp(datapath, new_path, in_port, srcip, dstip, src_port, dst_port, True)
+
+        else:
+            print("NO PATH in elephant flow!", dpid)

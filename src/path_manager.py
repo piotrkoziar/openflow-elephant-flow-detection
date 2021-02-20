@@ -26,7 +26,6 @@ class PathManager():
         # base1
         path_base = Path(1, 1, 3) # s1 <-> s3
         path_base.append(2, 1, 3) # s2 <-> h2
-        self._path_variant[path_base] = 0
         self.alt_paths[path_base] = []
 
         # alt1(base1)
@@ -46,14 +45,21 @@ class PathManager():
 
         self._import_paths()
 
+        self.dpid_to_increment = {}
+
     def get_base_paths(self):
         return self.alt_paths.keys()
 
-    def get_alt_path(self, base_path):
+    def get_alt_path(self, dpid, base_path):
 
         n_of_alt_paths = len(self.alt_paths[base_path])
-        idx = self._path_variant[base_path]
 
-        self._path_variant[base_path] = (self._path_variant[base_path] + 1) % n_of_alt_paths
+        self.dpid_to_increment.setdefault(dpid, -1)
+        self.dpid_to_increment[dpid] = (self.dpid_to_increment[dpid] + 1) % n_of_alt_paths
+
+        idx = self.dpid_to_increment[dpid]
 
         return self.alt_paths[base_path][idx]
+
+path_manager = PathManager()
+
