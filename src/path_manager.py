@@ -52,7 +52,10 @@ class PathManager():
 
     def get_alt_path(self, dpid, base_path):
 
-        n_of_alt_paths = len(self.alt_paths[base_path])
+        try:
+            n_of_alt_paths = len(self.alt_paths[base_path])
+        except KeyError:
+            return None
 
         self.dpid_to_increment.setdefault(dpid, -1)
         self.dpid_to_increment[dpid] = (self.dpid_to_increment[dpid] + 1) % n_of_alt_paths
