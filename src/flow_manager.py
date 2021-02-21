@@ -38,18 +38,13 @@ class FlowManager():
             self.flows[dpid].append(Flow(match, actions, priority, tout_idle, tout_hard, path, is_elephant))
             added_flow = self.flows[dpid][-1]
 
-            print("ADded flow:")
-            print(added_flow)
             inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
                                                     added_flow.actions)]
 
             mod = parser.OFPFlowMod(datapath=datapath, priority=added_flow.priority,
                                     match=added_flow.match, instructions=inst,
                                     idle_timeout=added_flow.idle_timeout, hard_timeout=added_flow.hard_timeout)
-            print(mod)
             datapath.send_msg(mod)
-        else:
-            print("FLOW ALREADY EXISTS! No flow mod")
 
     def _find_flow(self, dpid, match, actions, priority=None, tout_idle=0, tout_hard=0):
         flow = Flow(match, actions, priority, tout_idle, tout_hard)
@@ -173,7 +168,6 @@ class FlowManager():
             p_match = parser.OFPMatch(eth_type=ether_type, in_port=p_in)
         else:
             p_match = parser.OFPMatch(in_port=p_in)
-            print("NO ETHER TYPE")
 
         p_actions = [parser.OFPActionOutput(p_out)]
         self._create_flow(datapath, p_match, p_actions, is_elephant=is_elephant, path=path)
